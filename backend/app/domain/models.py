@@ -41,6 +41,7 @@ class AssetResolution(BaseModel):
     asset_type: AssetType = AssetType.UNKNOWN
     status: AssetStatus
     company_name: str | None = None
+    cik: str | None = None
 
 
 class PortfolioPosition(BaseModel):

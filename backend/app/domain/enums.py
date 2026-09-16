@@ -1,25 +1,25 @@
-from enum import StrEnum
+from enum import Enum
 
 
-class AssetType(StrEnum):
+class AssetType(str, Enum):
     EQUITY = "equity"
     ETF = "etf"
     UNKNOWN = "unknown"
 
 
-class AssetStatus(StrEnum):
+class AssetStatus(str, Enum):
     READY = "ready"
     PENDING_ENRICHMENT = "pending_enrichment"
     UNSUPPORTED = "unsupported"
     INVALID = "invalid"
 
 
-class PortfolioStatus(StrEnum):
+class PortfolioStatus(str, Enum):
     READY = "ready"
     PARTIALLY_READY = "partially_ready"
 
 
-class NodeType(StrEnum):
+class NodeType(str, Enum):
     PORTFOLIO = "portfolio"
     ASSET = "asset"
     COMPANY = "company"
@@ -30,7 +30,7 @@ class NodeType(StrEnum):
     THEME = "theme"
 
 
-class RelationType(StrEnum):
+class RelationType(str, Enum):
     OWNS = "OWNS"
     REPRESENTS = "REPRESENTS"
     HOLDS = "HOLDS"

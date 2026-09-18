@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from app.domain.models import AssetResolution, CompanyMetadata, EtfHolding
+from app.domain.models import (
+    AssetResolution,
+    CompanyFilings,
+    CompanyMetadata,
+    EtfHolding,
+)
 
 
 class AssetDataProvider(ABC):
@@ -26,4 +31,16 @@ class CompanyMetadataProvider(ABC):
 
     @abstractmethod
     def get_metadata(self, cik: str) -> CompanyMetadata | None:
+        raise NotImplementedError
+
+
+class CompanyFilingsProvider(ABC):
+    """Return recent SEC filing metadata for a canonical company."""
+
+    @abstractmethod
+    def get_recent_filings(
+        self,
+        cik: str,
+        limit: int,
+    ) -> CompanyFilings | None:
         raise NotImplementedError

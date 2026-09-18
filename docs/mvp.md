@@ -8,10 +8,11 @@
 4. Distinguish equities from ETFs once resolved.
 5. Expand ETF holdings from sourced data.
 6. Build a shared company knowledge graph with SEC-backed company identity, primary industry, and business-address country metadata.
-7. Store evidence/provenance for document-derived edges.
-8. Return exposure paths explaining why a portfolio is connected to an entity.
-9. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.
-10. Provide a small interactive web UI.
+7. Ingest recent SEC 10-K/10-Q filing metadata as canonical source-document nodes.
+8. Store evidence/provenance for document-derived edges.
+9. Return exposure paths explaining why a portfolio is connected to an entity.
+10. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.
+11. Provide a small interactive web UI.
 
 ## Explicitly out of scope
 

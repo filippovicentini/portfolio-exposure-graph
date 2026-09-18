@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from uuid import UUID
 
 from app.domain.models import (
+    CompanyFilingTarget,
+    CompanyFilings,
     CompanyMetadata,
     CompanyMetadataTarget,
     CompanyResolution,
@@ -43,6 +45,21 @@ class GraphRepository(ABC):
     def sync_company_metadata(
         self,
         company_metadata: Mapping[str, CompanyMetadata],
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_company_filing_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[CompanyFilingTarget]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def sync_company_filings(
+        self,
+        company_filings: Mapping[str, CompanyFilings],
     ) -> None:
         raise NotImplementedError
 

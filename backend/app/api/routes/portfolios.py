@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import graph_service, lookthrough_service, portfolio_service
 from app.domain.models import (
+    CompanyFilingsSyncResult,
     CompanyMetadataSyncResult,
     GraphSyncResult,
     Portfolio,
@@ -54,6 +55,25 @@ def sync_portfolio_company_metadata(
     limit: int = Query(default=25, ge=1, le=100),
 ) -> CompanyMetadataSyncResult:
     result = graph_service.sync_company_metadata(portfolio_id, limit=limit)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/sec-filings/sync",
+    response_model=CompanyFilingsSyncResult,
+)
+def sync_portfolio_sec_filings(
+    portfolio_id: UUID,
+    company_limit: int = Query(default=5, ge=1, le=25),
+    filings_per_company: int = Query(default=4, ge=1, le=20),
+) -> CompanyFilingsSyncResult:
+    result = graph_service.sync_company_filings(
+        portfolio_id,
+        company_limit=company_limit,
+        filings_per_company=filings_per_company,
+    )
     if result is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     return result

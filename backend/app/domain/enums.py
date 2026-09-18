@@ -27,6 +27,7 @@ class NodeType(str, Enum):
     INDUSTRY = "industry"
     COUNTRY = "country"
     SUPPLIER = "supplier"
+    FILING = "filing"
     THEME = "theme"
 
 
@@ -37,4 +38,5 @@ class RelationType(str, Enum):
     OPERATES_IN = "OPERATES_IN"
     BASED_IN = "BASED_IN"
     DEPENDS_ON = "DEPENDS_ON"
+    FILED = "FILED"
     EXPOSED_TO = "EXPOSED_TO"

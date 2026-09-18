@@ -7,6 +7,8 @@ from neo4j import GraphDatabase
 
 from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
+    CompanyFilingTarget,
+    CompanyFilings,
     CompanyMetadata,
     CompanyMetadataTarget,
     CompanyResolution,
@@ -157,6 +159,44 @@ class Neo4jGraphRepository(GraphRepository):
     RETURN [etf.ticker, asset.ticker] AS asset_path,
            ['OWNS', 'HOLDS'] AS relations,
            owns.weight_pct * holds.weight_pct / 100.0 AS effective_weight_pct
+    """
+
+    COMPANY_FILING_TARGETS_QUERY = """
+    MATCH path =
+      (p:Portfolio {portfolio_id: $portfolio_id})
+      -[:OWNS|HOLDS*1..2]->(asset:Asset)
+      -[:REPRESENTS]->(company:Company)
+    WHERE NOT ('sec_filings_synced_at' IN keys(company))
+    WITH company, min(length(path)) AS path_length
+    RETURN company.cik AS cik, company.name AS name
+    ORDER BY path_length ASC, company.name ASC
+    LIMIT $limit
+    """
+
+    MARK_COMPANY_FILINGS_SYNCED_QUERY = """
+    UNWIND $companies AS item
+    MATCH (company:Company {cik: item.cik})
+    SET company.sec_filings_synced_at = datetime(),
+        company.sec_filings_source_url = item.source_url,
+        company.updated_at = datetime()
+    """
+
+    UPSERT_FILINGS_QUERY = """
+    UNWIND $filings AS item
+    MATCH (company:Company {cik: item.cik})
+    MERGE (filing:Filing {accession_number: item.accession_number})
+    SET filing.cik = item.cik,
+        filing.form = item.form,
+        filing.filing_date = item.filing_date,
+        filing.report_date = item.report_date,
+        filing.primary_document = item.primary_document,
+        filing.source_url = item.source_url,
+        filing.filing_index_url = item.filing_index_url,
+        filing.submissions_url = item.submissions_url,
+        filing.updated_at = datetime()
+    MERGE (company)-[r:FILED]->(filing)
+    SET r.source_url = item.submissions_url,
+        r.updated_at = datetime()
     """
 
     INDUSTRY_EXPOSURES_QUERY = """
@@ -350,6 +390,69 @@ class Neo4jGraphRepository(GraphRepository):
             self.driver.execute_query(
                 self.UPSERT_COUNTRIES_QUERY,
                 countries=countries,
+                database_=self.database,
+            )
+
+    def get_company_filing_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[CompanyFilingTarget]:
+        records, _, _ = self.driver.execute_query(
+            self.COMPANY_FILING_TARGETS_QUERY,
+            portfolio_id=str(portfolio_id),
+            limit=limit,
+            database_=self.database,
+        )
+        return [
+            CompanyFilingTarget(
+                cik=str(record["cik"]),
+                name=str(record["name"]),
+            )
+            for record in records
+        ]
+
+    def sync_company_filings(
+        self,
+        company_filings: Mapping[str, CompanyFilings],
+    ) -> None:
+        if not company_filings:
+            return
+
+        companies = [
+            {
+                "cik": batch.cik,
+                "source_url": batch.source_url,
+            }
+            for _, batch in sorted(company_filings.items())
+        ]
+        self.driver.execute_query(
+            self.MARK_COMPANY_FILINGS_SYNCED_QUERY,
+            companies=companies,
+            database_=self.database,
+        )
+
+        filings = [
+            {
+                "cik": filing.cik,
+                "accession_number": filing.accession_number,
+                "form": filing.form,
+                "filing_date": filing.filing_date.isoformat(),
+                "report_date": (
+                    filing.report_date.isoformat() if filing.report_date else None
+                ),
+                "primary_document": filing.primary_document,
+                "source_url": filing.source_url,
+                "filing_index_url": filing.filing_index_url,
+                "submissions_url": filing.submissions_url,
+            }
+            for _, batch in sorted(company_filings.items())
+            for filing in batch.filings
+        ]
+        if filings:
+            self.driver.execute_query(
+                self.UPSERT_FILINGS_QUERY,
+                filings=filings,
                 database_=self.database,
             )
 

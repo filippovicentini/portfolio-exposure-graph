@@ -7,6 +7,8 @@ from app.dependencies import (
     enrichment_queue,
     portfolio_repository,
 )
+from app.domain.enums import AssetStatus, AssetType
+from app.domain.models import AssetResolution
 from app.main import app
 from app.repositories.asset_registry import InMemoryAssetRegistry
 
@@ -17,6 +19,15 @@ def reset_state():
     enrichment_queue.jobs.clear()
 
     fresh_registry = InMemoryAssetRegistry()
+    fresh_registry.save(
+        AssetResolution(
+            ticker="QQQ",
+            exchange="NASDAQ",
+            asset_type=AssetType.ETF,
+            status=AssetStatus.READY,
+            company_name="Invesco QQQ Trust",
+        )
+    )
     asset_registry._assets = fresh_registry._assets
 
     original_providers = asset_resolver.providers

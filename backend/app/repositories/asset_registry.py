@@ -17,11 +17,10 @@ class AssetRegistry(ABC):
 
 
 class InMemoryAssetRegistry(AssetRegistry):
-    """Temporary registry for the first vertical slice.
+    """Temporary in-memory registry for resolved assets.
 
-    It deliberately contains only a tiny seed universe. A syntactically valid
-    ticker missing from this registry is not treated as an error: the service
-    creates a PENDING_ENRICHMENT asset so a future provider can resolve it.
+    The remaining equity seeds are development conveniences only. ETFs are
+    deliberately not hardcoded: they must be resolved dynamically by a provider.
     """
 
     def __init__(self) -> None:
@@ -39,20 +38,6 @@ class InMemoryAssetRegistry(AssetRegistry):
                 asset_type=AssetType.EQUITY,
                 status=AssetStatus.READY,
                 company_name="Microsoft Corporation",
-            ),
-            AssetResolution(
-                ticker="QQQ",
-                exchange="NASDAQ",
-                asset_type=AssetType.ETF,
-                status=AssetStatus.READY,
-                company_name="Invesco QQQ Trust",
-            ),
-            AssetResolution(
-                ticker="SMH",
-                exchange="NASDAQ",
-                asset_type=AssetType.ETF,
-                status=AssetStatus.READY,
-                company_name="VanEck Semiconductor ETF",
             ),
         ]
         self._assets = {asset.ticker: asset for asset in seed}

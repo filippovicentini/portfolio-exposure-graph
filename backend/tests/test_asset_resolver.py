@@ -55,3 +55,10 @@ def test_invalid_ticker_is_invalid():
     asset = resolver.resolve("@@@")
 
     assert asset.status == AssetStatus.INVALID
+
+
+def test_etfs_are_not_hardcoded_in_default_registry():
+    registry = InMemoryAssetRegistry()
+
+    assert registry.get("QQQ") is None
+    assert registry.get("SMH") is None

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import csv
+import io
+
 import httpx
 
-from app.domain.models import EtfHolding
-from app.providers.base import EtfHoldingsProvider
+from app.domain.enums import AssetStatus, AssetType
+from app.domain.models import AssetResolution, EtfHolding
+from app.providers.base import AssetDataProvider, EtfHoldingsProvider
 
 
-class AlphaVantageEtfProvider(EtfHoldingsProvider):
-    """Fetch ETF constituents from Alpha Vantage ETF_PROFILE."""
+class AlphaVantageEtfProvider(AssetDataProvider, EtfHoldingsProvider):
+    """Resolve US-listed ETFs and fetch their constituents from Alpha Vantage."""
 
     BASE_URL = "https://www.alphavantage.co/query"
 
@@ -18,7 +22,69 @@ class AlphaVantageEtfProvider(EtfHoldingsProvider):
     ) -> None:
         self.api_key = api_key
         self.client = client or httpx.Client()
+        self._etf_listings: dict[str, tuple[str | None, str | None]] | None = None
         self._holdings_by_ticker: dict[str, list[EtfHolding]] = {}
+
+    def resolve(self, ticker: str) -> AssetResolution | None:
+        """Resolve a ticker only when Alpha Vantage classifies it as an ETF."""
+        normalized = ticker.strip().upper()
+
+        # Asset resolution should degrade gracefully when Alpha Vantage is not
+        # configured. The next provider (SEC) can still resolve equities.
+        if not self.api_key:
+            return None
+
+        listing = self._load_etf_listings().get(normalized)
+        if listing is None:
+            return None
+
+        name, exchange = listing
+        return AssetResolution(
+            ticker=normalized,
+            exchange=exchange,
+            asset_type=AssetType.ETF,
+            status=AssetStatus.READY,
+            company_name=name,
+        )
+
+    def _load_etf_listings(self) -> dict[str, tuple[str | None, str | None]]:
+        if self._etf_listings is not None:
+            return self._etf_listings
+
+        if not self.api_key:
+            return {}
+
+        response = self.client.get(
+            self.BASE_URL,
+            params={
+                "function": "LISTING_STATUS",
+                "state": "active",
+                "apikey": self.api_key,
+            },
+            timeout=10.0,
+        )
+        response.raise_for_status()
+
+        reader = csv.DictReader(io.StringIO(response.text))
+        required_fields = {"symbol", "name", "exchange", "assetType"}
+        if reader.fieldnames is None or not required_fields.issubset(reader.fieldnames):
+            raise RuntimeError("Unexpected Alpha Vantage listing status response")
+
+        listings: dict[str, tuple[str | None, str | None]] = {}
+        for row in reader:
+            if (row.get("assetType") or "").strip().upper() != "ETF":
+                continue
+
+            symbol = (row.get("symbol") or "").strip().upper()
+            if not symbol:
+                continue
+
+            name = (row.get("name") or "").strip() or None
+            exchange = (row.get("exchange") or "").strip() or None
+            listings[symbol] = (name, exchange)
+
+        self._etf_listings = listings
+        return listings
 
     def get_holdings(self, ticker: str) -> list[EtfHolding]:
         normalized = ticker.strip().upper()

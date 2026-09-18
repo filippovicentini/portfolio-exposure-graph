@@ -15,7 +15,10 @@ sec_asset_provider = SecAssetProvider(user_agent=settings.sec_user_agent)
 alpha_vantage_etf_provider = AlphaVantageEtfProvider(
     api_key=settings.alpha_vantage_api_key
 )
-asset_resolver = AssetResolver(asset_registry, providers=[sec_asset_provider])
+asset_resolver = AssetResolver(
+    asset_registry,
+    providers=[alpha_vantage_etf_provider, sec_asset_provider],
+)
 portfolio_service = PortfolioService(
     repository=portfolio_repository,
     asset_resolver=asset_resolver,

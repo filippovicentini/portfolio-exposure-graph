@@ -41,3 +41,8 @@ def reset_state():
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app)
+
+
+@pytest.fixture(name="portfolio_repository")
+def portfolio_repository_fixture():
+    return portfolio_repository

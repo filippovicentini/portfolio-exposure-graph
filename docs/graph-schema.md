@@ -41,3 +41,18 @@ Every AI- or document-derived structural edge must carry provenance before it ca
 - `extraction_method`
 
 No numeric impact is inferred from a structural edge. Quantitative weights are used only when a sourced numeric relationship exists (portfolio weights, ETF holdings, etc.).
+
+## Current Neo4j MVP representation
+
+The first persistence increment deliberately keeps the storage model smaller than the
+long-term schema above:
+
+- `(:Portfolio)` is the user-specific root.
+- Listed instruments are stored as `(:Asset)` nodes.
+- Resolved assets also receive `:Equity` or `:ETF` labels.
+- `(:Portfolio)-[:OWNS {weight_pct}]->(:Asset)` stores direct portfolio weights.
+- `(:ETF)-[:HOLDS {weight_pct}]->(:Asset)` stores one-level sourced ETF holdings.
+
+Canonical `Company` nodes and `REPRESENTS` edges are intentionally deferred to the
+company/filing enrichment milestone. This avoids pretending that every provider
+holding symbol has already been resolved to a canonical legal entity.

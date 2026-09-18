@@ -2,9 +2,11 @@ from app.core.config import settings
 from app.providers.alpha_vantage_etf_provider import AlphaVantageEtfProvider
 from app.providers.sec_asset_provider import SecAssetProvider
 from app.repositories.asset_registry import InMemoryAssetRegistry
+from app.repositories.neo4j_graph_repository import Neo4jGraphRepository
 from app.repositories.portfolio_repository import InMemoryPortfolioRepository
 from app.services.asset_resolver import AssetResolver
 from app.services.enrichment_queue import InMemoryEnrichmentQueue
+from app.services.graph_service import GraphService
 from app.services.lookthrough_service import LookthroughService
 from app.services.portfolio_service import PortfolioService
 
@@ -14,6 +16,12 @@ enrichment_queue = InMemoryEnrichmentQueue()
 sec_asset_provider = SecAssetProvider(user_agent=settings.sec_user_agent)
 alpha_vantage_etf_provider = AlphaVantageEtfProvider(
     api_key=settings.alpha_vantage_api_key
+)
+graph_repository = Neo4jGraphRepository(
+    uri=settings.neo4j_uri,
+    user=settings.neo4j_user,
+    password=settings.neo4j_password,
+    database=settings.neo4j_database,
 )
 asset_resolver = AssetResolver(
     asset_registry,
@@ -26,5 +34,11 @@ portfolio_service = PortfolioService(
 )
 lookthrough_service = LookthroughService(
     repository=portfolio_repository,
+    etf_holdings_provider=alpha_vantage_etf_provider,
+)
+
+graph_service = GraphService(
+    portfolio_repository=portfolio_repository,
+    graph_repository=graph_repository,
     etf_holdings_provider=alpha_vantage_etf_provider,
 )

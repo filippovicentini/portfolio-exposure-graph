@@ -41,4 +41,5 @@ graph_service = GraphService(
     portfolio_repository=portfolio_repository,
     graph_repository=graph_repository,
     etf_holdings_provider=alpha_vantage_etf_provider,
+    company_asset_provider=sec_asset_provider,
 )

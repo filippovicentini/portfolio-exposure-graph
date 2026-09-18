@@ -4,7 +4,13 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from app.domain.enums import AssetStatus, AssetType, PortfolioStatus
-from app.domain.models import AssetResolution, EtfHolding, Portfolio, PortfolioPosition
+from app.domain.models import (
+    AssetResolution,
+    CompanyResolution,
+    EtfHolding,
+    Portfolio,
+    PortfolioPosition,
+)
 from app.repositories.neo4j_graph_repository import Neo4jGraphRepository
 
 
@@ -61,7 +67,7 @@ def make_portfolio() -> Portfolio:
     )
 
 
-def test_neo4j_repository_writes_portfolio_positions_and_holdings():
+def test_neo4j_repository_writes_portfolio_holdings_and_companies():
     driver = FakeDriver()
     repository = Neo4jGraphRepository(
         uri="bolt://unused",
@@ -80,9 +86,23 @@ def test_neo4j_repository_writes_portfolio_positions_and_holdings():
                 EtfHolding(ticker="ZERO", description="Zero", weight_pct=0.0),
             ]
         },
+        {
+            "NVDA": CompanyResolution(
+                ticker="NVDA",
+                cik="0001045810",
+                name="NVIDIA CORP",
+                exchange="Nasdaq",
+            ),
+            "AAPL": CompanyResolution(
+                ticker="AAPL",
+                cik="0000320193",
+                name="Apple Inc.",
+                exchange="Nasdaq",
+            ),
+        },
     )
 
-    assert len(driver.calls) == 4
+    assert len(driver.calls) == 5
     _, positions_call = driver.calls[1]
     assert positions_call["portfolio_id"] == str(portfolio.portfolio_id)
     assert {item["ticker"] for item in positions_call["positions"]} == {"NVDA", "QQQ"}
@@ -90,6 +110,12 @@ def test_neo4j_repository_writes_portfolio_positions_and_holdings():
     _, holdings_call = driver.calls[3]
     assert [item["ticker"] for item in holdings_call["holdings"]] == ["NVDA", "AAPL"]
     assert holdings_call["database_"] == "neo4j"
+
+    company_query, companies_call = driver.calls[4]
+    assert "WITH asset, company\n    OPTIONAL MATCH" in company_query
+    assert "MERGE (canonical:Company {cik: company.cik})" in company_query
+    assert [item["ticker"] for item in companies_call["companies"]] == ["AAPL", "NVDA"]
+    assert companies_call["companies"][1]["cik"] == "0001045810"
 
 
 def test_neo4j_repository_parses_exposure_paths():

@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from app.domain.models import EtfHolding, ExposurePath
-from app.providers.base import EtfHoldingsProvider
+from app.domain.enums import AssetStatus, AssetType
+from app.domain.models import AssetResolution, EtfHolding, ExposurePath
+from app.providers.base import AssetDataProvider, EtfHoldingsProvider
 from app.repositories.graph_repository import GraphRepository
 from app.services.graph_service import GraphService
 
@@ -18,14 +19,41 @@ class FakeEtfHoldingsProvider(EtfHoldingsProvider):
         ]
 
 
+class FakeCompanyAssetProvider(AssetDataProvider):
+    def resolve(self, ticker: str) -> AssetResolution | None:
+        companies = {
+            "NVDA": ("NVIDIA CORP", "0001045810", "Nasdaq"),
+            "AAPL": ("Apple Inc.", "0000320193", "Nasdaq"),
+        }
+        data = companies.get(ticker)
+        if data is None:
+            return None
+        name, cik, exchange = data
+        return AssetResolution(
+            ticker=ticker,
+            exchange=exchange,
+            asset_type=AssetType.EQUITY,
+            status=AssetStatus.READY,
+            company_name=name,
+            cik=cik,
+        )
+
+
+class FailingCompanyAssetProvider(AssetDataProvider):
+    def resolve(self, ticker: str) -> AssetResolution | None:
+        raise RuntimeError("provider unavailable")
+
+
 class FakeGraphRepository(GraphRepository):
     def __init__(self) -> None:
         self.synced_portfolio = None
         self.synced_holdings = None
+        self.synced_companies = None
 
-    def sync_portfolio(self, portfolio, etf_holdings) -> None:
+    def sync_portfolio(self, portfolio, etf_holdings, company_resolutions) -> None:
         self.synced_portfolio = portfolio
         self.synced_holdings = dict(etf_holdings)
+        self.synced_companies = dict(company_resolutions)
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -42,7 +70,9 @@ class FakeGraphRepository(GraphRepository):
         ]
 
 
-def test_graph_service_syncs_direct_and_etf_exposure(client, portfolio_repository):
+def test_graph_service_syncs_assets_etf_exposure_and_companies(
+    client, portfolio_repository
+):
     created = client.post(
         "/api/v1/portfolios",
         json={
@@ -60,20 +90,52 @@ def test_graph_service_syncs_direct_and_etf_exposure(client, portfolio_repositor
         portfolio_repository=portfolio_repository,
         graph_repository=graph_repository,
         etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
     )
 
     result = service.sync(portfolio_id)
 
     assert result is not None
     assert result.assets_synced == 3
+    assert result.companies_synced == 2
     assert result.ownership_edges_synced == 2
     assert result.holding_edges_synced == 2
+    assert result.represents_edges_synced == 2
     assert result.unexpanded_etfs == []
+    assert result.unresolved_company_assets == []
     assert graph_repository.synced_portfolio.portfolio_id == portfolio_id
     assert [holding.ticker for holding in graph_repository.synced_holdings["QQQ"]] == [
         "NVDA",
         "AAPL",
     ]
+    assert set(graph_repository.synced_companies) == {"AAPL", "NVDA"}
+    assert graph_repository.synced_companies["NVDA"].cik == "0001045810"
+
+
+def test_graph_service_keeps_graph_sync_available_when_company_provider_fails(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Fallback", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FailingCompanyAssetProvider(),
+    )
+
+    result = service.sync(portfolio_id)
+
+    assert result is not None
+    assert result.assets_synced == 1
+    assert result.companies_synced == 0
+    assert result.represents_edges_synced == 0
+    assert result.unresolved_company_assets == ["NVDA"]
+    assert graph_repository.synced_companies == {}
 
 
 def test_graph_service_returns_paths(client, portfolio_repository):
@@ -87,6 +149,7 @@ def test_graph_service_returns_paths(client, portfolio_repository):
         portfolio_repository=portfolio_repository,
         graph_repository=FakeGraphRepository(),
         etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
     )
 
     result = service.get_paths(portfolio_id)

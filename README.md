@@ -16,12 +16,12 @@ Implemented:
 - ETF holdings ingestion and one-level look-through
 - direct + indirect exposure aggregation
 - Neo4j local infrastructure
-- Neo4j graph repository for `Portfolio -> Asset` and `ETF -> Asset` paths
+- Neo4j graph repository for portfolio, ETF, asset, and canonical company paths
+- SEC-backed `Asset -> Company` canonicalization keyed by CIK
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
-- canonical `Company` nodes and `Asset -> Company` resolution
 - SEC filing ingestion
 - sourced supplier/dependency extraction
 - provenance on document-derived graph edges
@@ -33,12 +33,12 @@ Out of scope for the MVP: price prediction, trading recommendations, portfolio o
 
 ```text
 Portfolio
-  |-- OWNS --> Equity
+  |-- OWNS --> Equity Asset -- REPRESENTS --> Company
   `-- OWNS --> ETF
-                 `-- HOLDS --> Asset
+                 `-- HOLDS --> Equity Asset -- REPRESENTS --> Company
 ```
 
-The graph layer intentionally stores ETF constituents as `Asset` nodes first. Canonical company resolution comes later, so the system does not claim a legal-entity mapping that has not yet been established.
+Listed instruments remain `Asset` nodes because the same economic company can be represented by more than one security. When SEC ticker data provides a CIK, the graph creates one canonical `Company` node keyed by that CIK and links the asset with `REPRESENTS`. ETF constituents that cannot be resolved to a canonical company remain valid `Asset` nodes and are reported by graph sync.
 
 ## Environment
 

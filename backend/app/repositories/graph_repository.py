@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from uuid import UUID
 
-from app.domain.models import EtfHolding, ExposurePath, Portfolio
+from app.domain.models import CompanyResolution, EtfHolding, ExposurePath, Portfolio
 
 
 class GraphRepository(ABC):
@@ -15,6 +15,7 @@ class GraphRepository(ABC):
         self,
         portfolio: Portfolio,
         etf_holdings: Mapping[str, list[EtfHolding]],
+        company_resolutions: Mapping[str, CompanyResolution],
     ) -> None:
         raise NotImplementedError
 

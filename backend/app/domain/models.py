@@ -77,6 +77,18 @@ class EtfHolding(BaseModel):
         return value.strip().upper()
 
 
+class CompanyResolution(BaseModel):
+    ticker: str = Field(min_length=1, max_length=24)
+    cik: str = Field(min_length=1, max_length=10)
+    name: str = Field(min_length=1)
+    exchange: str | None = None
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_company_ticker(cls, value: str) -> str:
+        return value.strip().upper()
+
+
 class ExposureBreakdown(BaseModel):
     ticker: str
     direct_weight_pct: float
@@ -100,9 +112,12 @@ class ExposurePath(BaseModel):
 class GraphSyncResult(BaseModel):
     portfolio_id: UUID
     assets_synced: int = Field(ge=0)
+    companies_synced: int = Field(ge=0)
     ownership_edges_synced: int = Field(ge=0)
     holding_edges_synced: int = Field(ge=0)
+    represents_edges_synced: int = Field(ge=0)
     unexpanded_etfs: list[str] = Field(default_factory=list)
+    unresolved_company_assets: list[str] = Field(default_factory=list)
 
 
 class PortfolioExposurePaths(BaseModel):

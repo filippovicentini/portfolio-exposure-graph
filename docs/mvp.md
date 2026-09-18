@@ -34,4 +34,4 @@ An unseen ticker does not block portfolio creation.
 
 `invalid -> INVALID`
 
-Provider-backed validation and enrichment are implemented in the next milestone.
+Provider-backed equity and ETF resolution are implemented. Remaining unresolved assets stay non-blocking and can be enriched later.

@@ -4,8 +4,8 @@ import logging
 from uuid import UUID
 
 from app.domain.enums import AssetStatus, AssetType
-from app.domain.models import GraphSyncResult, PortfolioExposurePaths
-from app.providers.base import EtfHoldingsProvider
+from app.domain.models import CompanyResolution, GraphSyncResult, PortfolioExposurePaths
+from app.providers.base import AssetDataProvider, EtfHoldingsProvider
 from app.repositories.graph_repository import GraphRepository
 from app.repositories.portfolio_repository import PortfolioRepository
 
@@ -20,10 +20,12 @@ class GraphService:
         portfolio_repository: PortfolioRepository,
         graph_repository: GraphRepository,
         etf_holdings_provider: EtfHoldingsProvider,
+        company_asset_provider: AssetDataProvider,
     ) -> None:
         self.portfolio_repository = portfolio_repository
         self.graph_repository = graph_repository
         self.etf_holdings_provider = etf_holdings_provider
+        self.company_asset_provider = company_asset_provider
 
     def sync(self, portfolio_id: UUID) -> GraphSyncResult | None:
         portfolio = self.portfolio_repository.get(portfolio_id)
@@ -54,7 +56,24 @@ class GraphService:
                 continue
             etf_holdings[ticker] = positive_holdings
 
-        self.graph_repository.sync_portfolio(portfolio, etf_holdings)
+        company_tickers = {
+            position.ticker.upper()
+            for position in portfolio.positions
+            if position.asset.status == AssetStatus.READY
+            and position.asset.asset_type == AssetType.EQUITY
+        }
+        for holdings in etf_holdings.values():
+            company_tickers.update(holding.ticker.upper() for holding in holdings)
+
+        company_resolutions, unresolved_company_assets = self._resolve_companies(
+            company_tickers
+        )
+
+        self.graph_repository.sync_portfolio(
+            portfolio,
+            etf_holdings,
+            company_resolutions,
+        )
 
         synced_positions = [
             position
@@ -69,9 +88,12 @@ class GraphService:
         return GraphSyncResult(
             portfolio_id=portfolio.portfolio_id,
             assets_synced=len(asset_tickers),
+            companies_synced=len({item.cik for item in company_resolutions.values()}),
             ownership_edges_synced=len(synced_positions),
             holding_edges_synced=sum(len(items) for items in etf_holdings.values()),
+            represents_edges_synced=len(company_resolutions),
             unexpanded_etfs=sorted(set(unexpanded_etfs)),
+            unresolved_company_assets=unresolved_company_assets,
         )
 
     def get_paths(self, portfolio_id: UUID) -> PortfolioExposurePaths | None:
@@ -81,3 +103,38 @@ class GraphService:
             portfolio_id=portfolio_id,
             paths=self.graph_repository.get_exposure_paths(portfolio_id),
         )
+
+    def _resolve_companies(
+        self,
+        tickers: set[str],
+    ) -> tuple[dict[str, CompanyResolution], list[str]]:
+        resolutions: dict[str, CompanyResolution] = {}
+        unresolved: list[str] = []
+        ordered_tickers = sorted(tickers)
+
+        for index, ticker in enumerate(ordered_tickers):
+            try:
+                asset = self.company_asset_provider.resolve(ticker)
+            except Exception:
+                logger.exception("Company asset provider failed during graph sync")
+                unresolved.extend(ordered_tickers[index:])
+                break
+
+            if (
+                asset is None
+                or asset.status != AssetStatus.READY
+                or asset.asset_type != AssetType.EQUITY
+                or not asset.cik
+                or not asset.company_name
+            ):
+                unresolved.append(ticker)
+                continue
+
+            resolutions[ticker] = CompanyResolution(
+                ticker=ticker,
+                cik=asset.cik,
+                name=asset.company_name,
+                exchange=asset.exchange,
+            )
+
+        return resolutions, sorted(set(unresolved))

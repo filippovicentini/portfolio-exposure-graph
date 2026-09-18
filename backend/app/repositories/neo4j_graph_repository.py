@@ -6,12 +6,17 @@ from uuid import UUID
 from neo4j import GraphDatabase
 
 from app.domain.enums import AssetStatus, AssetType
-from app.domain.models import EtfHolding, ExposurePath, Portfolio
+from app.domain.models import (
+    CompanyResolution,
+    EtfHolding,
+    ExposurePath,
+    Portfolio,
+)
 from app.repositories.graph_repository import GraphRepository
 
 
 class Neo4jGraphRepository(GraphRepository):
-    """Store portfolio ownership and one-level ETF holdings in Neo4j."""
+    """Store portfolio, asset, ETF holding, and canonical company graph data."""
 
     UPSERT_PORTFOLIO_QUERY = """
     MERGE (p:Portfolio {portfolio_id: $portfolio_id})
@@ -64,6 +69,26 @@ class Neo4jGraphRepository(GraphRepository):
         r.updated_at = datetime()
     """
 
+    UPSERT_COMPANIES_QUERY = """
+    UNWIND $companies AS company
+    MATCH (asset:Asset {ticker: company.ticker})
+    SET asset:Equity,
+        asset.asset_type = 'equity',
+        asset.name = company.name,
+        asset.exchange = company.exchange,
+        asset.cik = company.cik,
+        asset.updated_at = datetime()
+    WITH asset, company
+    OPTIONAL MATCH (asset)-[old:REPRESENTS]->(:Company)
+    DELETE old
+    WITH asset, company
+    MERGE (canonical:Company {cik: company.cik})
+    SET canonical.name = company.name,
+        canonical.updated_at = datetime()
+    MERGE (asset)-[r:REPRESENTS]->(canonical)
+    SET r.updated_at = datetime()
+    """
+
     EXPOSURE_PATHS_QUERY = """
     MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(asset:Asset:Equity)
     RETURN [asset.ticker] AS asset_path,
@@ -91,6 +116,7 @@ class Neo4jGraphRepository(GraphRepository):
         self,
         portfolio: Portfolio,
         etf_holdings: Mapping[str, list[EtfHolding]],
+        company_resolutions: Mapping[str, CompanyResolution],
     ) -> None:
         portfolio_id = str(portfolio.portfolio_id)
         positions = [
@@ -124,30 +150,44 @@ class Neo4jGraphRepository(GraphRepository):
             )
 
         etf_tickers = sorted(etf_holdings)
-        if not etf_tickers:
-            return
-
-        self.driver.execute_query(
-            self.DELETE_ETF_HOLDINGS_QUERY,
-            etf_tickers=etf_tickers,
-            database_=self.database,
-        )
-
-        holdings = [
-            {
-                "etf_ticker": etf_ticker,
-                "ticker": holding.ticker,
-                "description": holding.description,
-                "weight_pct": holding.weight_pct,
-            }
-            for etf_ticker, items in etf_holdings.items()
-            for holding in items
-            if holding.weight_pct > 0
-        ]
-        if holdings:
+        if etf_tickers:
             self.driver.execute_query(
-                self.UPSERT_ETF_HOLDINGS_QUERY,
-                holdings=holdings,
+                self.DELETE_ETF_HOLDINGS_QUERY,
+                etf_tickers=etf_tickers,
+                database_=self.database,
+            )
+
+            holdings = [
+                {
+                    "etf_ticker": etf_ticker,
+                    "ticker": holding.ticker,
+                    "description": holding.description,
+                    "weight_pct": holding.weight_pct,
+                }
+                for etf_ticker, items in etf_holdings.items()
+                for holding in items
+                if holding.weight_pct > 0
+            ]
+            if holdings:
+                self.driver.execute_query(
+                    self.UPSERT_ETF_HOLDINGS_QUERY,
+                    holdings=holdings,
+                    database_=self.database,
+                )
+
+        if company_resolutions:
+            companies = [
+                {
+                    "ticker": resolution.ticker,
+                    "cik": resolution.cik,
+                    "name": resolution.name,
+                    "exchange": resolution.exchange,
+                }
+                for _, resolution in sorted(company_resolutions.items())
+            ]
+            self.driver.execute_query(
+                self.UPSERT_COMPANIES_QUERY,
+                companies=companies,
                 database_=self.database,
             )
 

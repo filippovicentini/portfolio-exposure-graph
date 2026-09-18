@@ -6,6 +6,7 @@ from uuid import uuid4
 from app.domain.enums import AssetStatus, AssetType, PortfolioStatus
 from app.domain.models import (
     AssetResolution,
+    CompanyMetadata,
     CompanyResolution,
     EtfHolding,
     Portfolio,
@@ -23,11 +24,14 @@ class FakeDriver:
         self.calls = []
         self.closed = False
         self.path_records = []
+        self.metadata_target_records = []
 
     def execute_query(self, query, **kwargs):
         self.calls.append((query, kwargs))
         if "effective_weight_pct" in query:
             return self.path_records, SimpleNamespace(), []
+        if "'sec_metadata_synced_at' IN keys(company)" in query:
+            return self.metadata_target_records, SimpleNamespace(), []
         return [], SimpleNamespace(), []
 
     def close(self):
@@ -116,6 +120,56 @@ def test_neo4j_repository_writes_portfolio_holdings_and_companies():
     assert "MERGE (canonical:Company {cik: company.cik})" in company_query
     assert [item["ticker"] for item in companies_call["companies"]] == ["AAPL", "NVDA"]
     assert companies_call["companies"][1]["cik"] == "0001045810"
+
+
+
+def test_neo4j_repository_lists_and_writes_company_metadata():
+    driver = FakeDriver()
+    driver.metadata_target_records = [
+        FakeRecord(cik="0001045810", name="NVIDIA CORP")
+    ]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused",
+        user="neo4j",
+        password="test",
+        driver=driver,
+    )
+    portfolio_id = uuid4()
+
+    targets = repository.get_company_metadata_targets(portfolio_id, limit=25)
+    repository.sync_company_metadata(
+        {
+            "0001045810": CompanyMetadata(
+                cik="0001045810",
+                industry_code="3674",
+                industry_name="Semiconductors & Related Devices",
+                country_code="X1",
+                country_name="UNITED STATES",
+                source_url="https://data.sec.gov/submissions/CIK0001045810.json",
+            )
+        }
+    )
+
+    assert len(targets) == 1
+    assert targets[0].cik == "0001045810"
+    assert targets[0].name == "NVIDIA CORP"
+
+    target_query, target_call = driver.calls[0]
+    assert "'sec_metadata_synced_at' IN keys(company)" in target_query
+    assert target_call["portfolio_id"] == str(portfolio_id)
+    assert target_call["limit"] == 25
+
+    mark_query, mark_call = driver.calls[1]
+    assert "sec_metadata_synced_at = datetime()" in mark_query
+    assert mark_call["companies"][0]["cik"] == "0001045810"
+
+    industry_query, industry_call = driver.calls[2]
+    assert "MERGE (industry:Industry {sic: item.industry_code})" in industry_query
+    assert industry_call["industries"][0]["industry_code"] == "3674"
+
+    country_query, country_call = driver.calls[3]
+    assert "MERGE (country:Country {sec_code: item.country_code})" in country_query
+    assert country_call["countries"][0]["country_code"] == "X1"
 
 
 def test_neo4j_repository_parses_exposure_paths():

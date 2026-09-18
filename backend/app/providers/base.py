@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from app.domain.models import AssetResolution, EtfHolding
+from app.domain.models import AssetResolution, CompanyMetadata, EtfHolding
 
 
 class AssetDataProvider(ABC):
@@ -18,4 +18,12 @@ class EtfHoldingsProvider(ABC):
 
     @abstractmethod
     def get_holdings(self, ticker: str) -> list[EtfHolding]:
+        raise NotImplementedError
+
+
+class CompanyMetadataProvider(ABC):
+    """Return structural company metadata from an external data source."""
+
+    @abstractmethod
+    def get_metadata(self, cik: str) -> CompanyMetadata | None:
         raise NotImplementedError

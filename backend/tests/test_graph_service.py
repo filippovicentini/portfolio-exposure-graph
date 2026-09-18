@@ -3,8 +3,18 @@ from __future__ import annotations
 from uuid import UUID
 
 from app.domain.enums import AssetStatus, AssetType
-from app.domain.models import AssetResolution, EtfHolding, ExposurePath
-from app.providers.base import AssetDataProvider, EtfHoldingsProvider
+from app.domain.models import (
+    AssetResolution,
+    CompanyMetadata,
+    CompanyMetadataTarget,
+    EtfHolding,
+    ExposurePath,
+)
+from app.providers.base import (
+    AssetDataProvider,
+    CompanyMetadataProvider,
+    EtfHoldingsProvider,
+)
 from app.repositories.graph_repository import GraphRepository
 from app.services.graph_service import GraphService
 
@@ -44,16 +54,54 @@ class FailingCompanyAssetProvider(AssetDataProvider):
         raise RuntimeError("provider unavailable")
 
 
+class FakeCompanyMetadataProvider(CompanyMetadataProvider):
+    def get_metadata(self, cik: str) -> CompanyMetadata | None:
+        metadata = {
+            "0001045810": CompanyMetadata(
+                cik="0001045810",
+                industry_code="3674",
+                industry_name="Semiconductors & Related Devices",
+                country_code="X1",
+                country_name="UNITED STATES",
+                source_url="https://data.sec.gov/submissions/CIK0001045810.json",
+            ),
+            "0000320193": CompanyMetadata(
+                cik="0000320193",
+                industry_code="3571",
+                industry_name="Electronic Computers",
+                country_code="X1",
+                country_name="UNITED STATES",
+                source_url="https://data.sec.gov/submissions/CIK0000320193.json",
+            ),
+        }
+        return metadata.get(cik)
+
+
+class FailingCompanyMetadataProvider(CompanyMetadataProvider):
+    def get_metadata(self, cik: str) -> CompanyMetadata | None:
+        raise RuntimeError("metadata unavailable")
+
+
 class FakeGraphRepository(GraphRepository):
     def __init__(self) -> None:
         self.synced_portfolio = None
         self.synced_holdings = None
         self.synced_companies = None
+        self.metadata_targets: list[CompanyMetadataTarget] = []
+        self.synced_metadata = None
 
     def sync_portfolio(self, portfolio, etf_holdings, company_resolutions) -> None:
         self.synced_portfolio = portfolio
         self.synced_holdings = dict(etf_holdings)
         self.synced_companies = dict(company_resolutions)
+
+    def get_company_metadata_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[CompanyMetadataTarget]:
+        return self.metadata_targets[:limit]
+
+    def sync_company_metadata(self, company_metadata) -> None:
+        self.synced_metadata = dict(company_metadata)
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -91,6 +139,7 @@ def test_graph_service_syncs_assets_etf_exposure_and_companies(
         graph_repository=graph_repository,
         etf_holdings_provider=FakeEtfHoldingsProvider(),
         company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
     )
 
     result = service.sync(portfolio_id)
@@ -126,6 +175,7 @@ def test_graph_service_keeps_graph_sync_available_when_company_provider_fails(
         graph_repository=graph_repository,
         etf_holdings_provider=FakeEtfHoldingsProvider(),
         company_asset_provider=FailingCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
     )
 
     result = service.sync(portfolio_id)
@@ -150,6 +200,7 @@ def test_graph_service_returns_paths(client, portfolio_repository):
         graph_repository=FakeGraphRepository(),
         etf_holdings_provider=FakeEtfHoldingsProvider(),
         company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
     )
 
     result = service.get_paths(portfolio_id)
@@ -158,3 +209,66 @@ def test_graph_service_returns_paths(client, portfolio_repository):
     assert result.paths[0].asset_path == ["NVDA"]
     assert result.paths[1].asset_path == ["QQQ", "NVDA"]
     assert result.paths[1].effective_weight_pct == 2.4
+
+
+def test_graph_service_syncs_company_metadata_in_bounded_batches(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Metadata", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.metadata_targets = [
+        CompanyMetadataTarget(cik="0001045810", name="NVIDIA CORP"),
+        CompanyMetadataTarget(cik="0000320193", name="Apple Inc."),
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+    )
+
+    result = service.sync_company_metadata(portfolio_id, limit=1)
+
+    assert result is not None
+    assert result.companies_requested == 1
+    assert result.companies_enriched == 1
+    assert result.industry_edges_synced == 1
+    assert result.country_edges_synced == 1
+    assert result.unresolved_company_ciks == []
+    assert set(graph_repository.synced_metadata) == {"0001045810"}
+
+
+def test_graph_service_company_metadata_failures_are_non_blocking(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Metadata fallback", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.metadata_targets = [
+        CompanyMetadataTarget(cik="0001045810", name="NVIDIA CORP")
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FailingCompanyMetadataProvider(),
+    )
+
+    result = service.sync_company_metadata(portfolio_id)
+
+    assert result is not None
+    assert result.companies_requested == 1
+    assert result.companies_enriched == 0
+    assert result.industry_edges_synced == 0
+    assert result.country_edges_synced == 0
+    assert result.unresolved_company_ciks == ["0001045810"]
+    assert graph_repository.synced_metadata == {}

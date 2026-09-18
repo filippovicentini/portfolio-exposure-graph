@@ -18,6 +18,8 @@ Implemented:
 - Neo4j local infrastructure
 - Neo4j graph repository for portfolio, ETF, asset, and canonical company paths
 - SEC-backed `Asset -> Company` canonicalization keyed by CIK
+- SEC submissions metadata for primary SIC industry and business-address country
+- `Company -> Industry` and `Company -> Country` structural graph edges
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
@@ -34,11 +36,17 @@ Out of scope for the MVP: price prediction, trading recommendations, portfolio o
 ```text
 Portfolio
   |-- OWNS --> Equity Asset -- REPRESENTS --> Company
+  |                                      |-- OPERATES_IN --> Industry
+  |                                      `-- BASED_IN ----> Country
   `-- OWNS --> ETF
                  `-- HOLDS --> Equity Asset -- REPRESENTS --> Company
+                                                     |-- OPERATES_IN --> Industry
+                                                     `-- BASED_IN ----> Country
 ```
 
 Listed instruments remain `Asset` nodes because the same economic company can be represented by more than one security. When SEC ticker data provides a CIK, the graph creates one canonical `Company` node keyed by that CIK and links the asset with `REPRESENTS`. ETF constituents that cannot be resolved to a canonical company remain valid `Asset` nodes and are reported by graph sync.
+
+Company metadata enrichment is a separate bounded step. It reads the SEC submissions JSON for canonical companies and stores the SEC primary SIC classification as `OPERATES_IN` plus the SEC business-address country as `BASED_IN`. These are structural facts, not numeric exposure weights. The endpoint defaults to 25 companies per call so large ETFs do not trigger hundreds of SEC requests in one synchronous request.
 
 ## Environment
 
@@ -78,6 +86,7 @@ Useful endpoints include:
 POST /api/v1/portfolios
 GET  /api/v1/portfolios/{portfolio_id}/lookthrough
 POST /api/v1/portfolios/{portfolio_id}/graph/sync
+POST /api/v1/portfolios/{portfolio_id}/graph/company-metadata/sync?limit=25
 GET  /api/v1/portfolios/{portfolio_id}/graph/paths
 ```
 

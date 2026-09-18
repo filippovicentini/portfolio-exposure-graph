@@ -53,5 +53,9 @@ The graph separates listed instruments from canonical companies:
 - `(:ETF)-[:HOLDS {weight_pct}]->(:Asset)` stores one-level sourced ETF holdings.
 - SEC-resolved equity assets link to `(:Company {cik})` through `[:REPRESENTS]`.
 - `Company.cik` is the canonical identity key; ticker symbols remain properties of `Asset`.
+- SEC submissions metadata can link `Company` to `Industry` through `[:OPERATES_IN]`; the industry key is the SEC SIC code.
+- SEC business-address metadata can link `Company` to `Country` through `[:BASED_IN]`; the country key is the normalized SEC/EDGAR country code.
 
-Company resolution is deliberately best-effort. A provider failure or an unresolved ETF constituent does not block portfolio graph sync; the asset remains in the graph and the sync response reports its ticker in `unresolved_company_assets`.
+`OPERATES_IN` currently means the company's primary SEC SIC classification, not an inferred list of every industry in which it participates. `BASED_IN` currently means the country derived from the SEC business address, not geographic revenue exposure. U.S. state codes are normalized to EDGAR code `X1` (United States), and Canadian province codes to `Z4` (Canada).
+
+Company resolution is deliberately best-effort. A provider failure or an unresolved ETF constituent does not block portfolio graph sync; the asset remains in the graph and the sync response reports its ticker in `unresolved_company_assets`. Company metadata enrichment is also best-effort and runs in bounded batches so a large ETF does not cause hundreds of SEC requests in a single synchronous operation. Successfully enriched companies are marked with `sec_metadata_synced_at` and the SEC source URL so the shared graph can reuse the metadata across portfolios.

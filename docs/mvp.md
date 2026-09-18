@@ -7,7 +7,7 @@
 3. Accept unseen syntactically valid tickers and queue them for enrichment.
 4. Distinguish equities from ETFs once resolved.
 5. Expand ETF holdings from sourced data.
-6. Build a shared company knowledge graph.
+6. Build a shared company knowledge graph with SEC-backed company identity, primary industry, and business-address country metadata.
 7. Store evidence/provenance for document-derived edges.
 8. Return exposure paths explaining why a portfolio is connected to an entity.
 9. Provide a small interactive web UI.

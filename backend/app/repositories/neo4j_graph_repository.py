@@ -7,6 +7,8 @@ from neo4j import GraphDatabase
 
 from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
+    CompanyMetadata,
+    CompanyMetadataTarget,
     CompanyResolution,
     EtfHolding,
     ExposurePath,
@@ -87,6 +89,61 @@ class Neo4jGraphRepository(GraphRepository):
         canonical.updated_at = datetime()
     MERGE (asset)-[r:REPRESENTS]->(canonical)
     SET r.updated_at = datetime()
+    """
+
+
+    COMPANY_METADATA_TARGETS_QUERY = """
+    MATCH path =
+      (p:Portfolio {portfolio_id: $portfolio_id})
+      -[:OWNS|HOLDS*1..2]->(asset:Asset)
+      -[:REPRESENTS]->(company:Company)
+    WHERE NOT ('sec_metadata_synced_at' IN keys(company))
+    WITH company, min(length(path)) AS path_length
+    RETURN company.cik AS cik, company.name AS name
+    ORDER BY path_length ASC, company.name ASC
+    LIMIT $limit
+    """
+
+    MARK_COMPANY_METADATA_SYNCED_QUERY = """
+    UNWIND $companies AS item
+    MATCH (company:Company {cik: item.cik})
+    SET company.sec_metadata_synced_at = datetime(),
+        company.sec_metadata_source_url = item.source_url,
+        company.updated_at = datetime()
+    """
+
+    UPSERT_INDUSTRIES_QUERY = """
+    UNWIND $industries AS item
+    MATCH (company:Company {cik: item.cik})
+    OPTIONAL MATCH (company)-[old:OPERATES_IN]->(:Industry)
+    DELETE old
+    WITH company, item
+    MERGE (industry:Industry {sic: item.industry_code})
+    SET industry.name = item.industry_name,
+        industry.source = 'SEC SIC',
+        industry.updated_at = datetime()
+    WITH company, industry, item
+    MERGE (company)-[r:OPERATES_IN]->(industry)
+    SET r.source = 'SEC submissions API',
+        r.source_url = item.source_url,
+        r.updated_at = datetime()
+    """
+
+    UPSERT_COUNTRIES_QUERY = """
+    UNWIND $countries AS item
+    MATCH (company:Company {cik: item.cik})
+    OPTIONAL MATCH (company)-[old:BASED_IN]->(:Country)
+    DELETE old
+    WITH company, item
+    MERGE (country:Country {sec_code: item.country_code})
+    SET country.name = item.country_name,
+        country.source = 'SEC business address',
+        country.updated_at = datetime()
+    WITH company, country, item
+    MERGE (company)-[r:BASED_IN]->(country)
+    SET r.source = 'SEC submissions API',
+        r.source_url = item.source_url,
+        r.updated_at = datetime()
     """
 
     EXPOSURE_PATHS_QUERY = """
@@ -188,6 +245,80 @@ class Neo4jGraphRepository(GraphRepository):
             self.driver.execute_query(
                 self.UPSERT_COMPANIES_QUERY,
                 companies=companies,
+                database_=self.database,
+            )
+
+
+    def get_company_metadata_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[CompanyMetadataTarget]:
+        records, _, _ = self.driver.execute_query(
+            self.COMPANY_METADATA_TARGETS_QUERY,
+            portfolio_id=str(portfolio_id),
+            limit=limit,
+            database_=self.database,
+        )
+        return [
+            CompanyMetadataTarget(
+                cik=str(record["cik"]),
+                name=str(record["name"]),
+            )
+            for record in records
+        ]
+
+    def sync_company_metadata(
+        self,
+        company_metadata: Mapping[str, CompanyMetadata],
+    ) -> None:
+        if not company_metadata:
+            return
+
+        companies = [
+            {
+                "cik": metadata.cik,
+                "source_url": metadata.source_url,
+            }
+            for _, metadata in sorted(company_metadata.items())
+        ]
+        self.driver.execute_query(
+            self.MARK_COMPANY_METADATA_SYNCED_QUERY,
+            companies=companies,
+            database_=self.database,
+        )
+
+        industries = [
+            {
+                "cik": metadata.cik,
+                "industry_code": metadata.industry_code,
+                "industry_name": metadata.industry_name,
+                "source_url": metadata.source_url,
+            }
+            for _, metadata in sorted(company_metadata.items())
+            if metadata.industry_code and metadata.industry_name
+        ]
+        if industries:
+            self.driver.execute_query(
+                self.UPSERT_INDUSTRIES_QUERY,
+                industries=industries,
+                database_=self.database,
+            )
+
+        countries = [
+            {
+                "cik": metadata.cik,
+                "country_code": metadata.country_code,
+                "country_name": metadata.country_name,
+                "source_url": metadata.source_url,
+            }
+            for _, metadata in sorted(company_metadata.items())
+            if metadata.country_code and metadata.country_name
+        ]
+        if countries:
+            self.driver.execute_query(
+                self.UPSERT_COUNTRIES_QUERY,
+                countries=countries,
                 database_=self.database,
             )
 

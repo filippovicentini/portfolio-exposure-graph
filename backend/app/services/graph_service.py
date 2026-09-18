@@ -5,6 +5,8 @@ from uuid import UUID
 
 from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
+    CompanyFilings,
+    CompanyFilingsSyncResult,
     CompanyMetadata,
     CompanyMetadataSyncResult,
     CompanyResolution,
@@ -14,6 +16,7 @@ from app.domain.models import (
 )
 from app.providers.base import (
     AssetDataProvider,
+    CompanyFilingsProvider,
     CompanyMetadataProvider,
     EtfHoldingsProvider,
 )
@@ -33,12 +36,14 @@ class GraphService:
         etf_holdings_provider: EtfHoldingsProvider,
         company_asset_provider: AssetDataProvider,
         company_metadata_provider: CompanyMetadataProvider,
+        company_filings_provider: CompanyFilingsProvider,
     ) -> None:
         self.portfolio_repository = portfolio_repository
         self.graph_repository = graph_repository
         self.etf_holdings_provider = etf_holdings_provider
         self.company_asset_provider = company_asset_provider
         self.company_metadata_provider = company_metadata_provider
+        self.company_filings_provider = company_filings_provider
 
     def sync(self, portfolio_id: UUID) -> GraphSyncResult | None:
         portfolio = self.portfolio_repository.get(portfolio_id)
@@ -156,6 +161,53 @@ class GraphService:
                 1
                 for item in metadata_by_cik.values()
                 if item.country_code and item.country_name
+            ),
+            unresolved_company_ciks=sorted(set(unresolved)),
+        )
+
+    def sync_company_filings(
+        self,
+        portfolio_id: UUID,
+        company_limit: int = 5,
+        filings_per_company: int = 4,
+    ) -> CompanyFilingsSyncResult | None:
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+
+        targets = self.graph_repository.get_company_filing_targets(
+            portfolio_id,
+            limit=company_limit,
+        )
+        filings_by_cik: dict[str, CompanyFilings] = {}
+        unresolved: list[str] = []
+
+        for target in targets:
+            try:
+                company_filings = self.company_filings_provider.get_recent_filings(
+                    target.cik,
+                    limit=filings_per_company,
+                )
+            except Exception:
+                logger.exception(
+                    "Company filings provider failed for CIK %s",
+                    target.cik,
+                )
+                unresolved.append(target.cik)
+                continue
+
+            if company_filings is None:
+                unresolved.append(target.cik)
+                continue
+            filings_by_cik[target.cik] = company_filings
+
+        self.graph_repository.sync_company_filings(filings_by_cik)
+
+        return CompanyFilingsSyncResult(
+            portfolio_id=portfolio_id,
+            companies_requested=len(targets),
+            companies_synced=len(filings_by_cik),
+            filings_synced=sum(
+                len(batch.filings) for batch in filings_by_cik.values()
             ),
             unresolved_company_ciks=sorted(set(unresolved)),
         )

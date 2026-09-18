@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 from app.dependencies import graph_service
 from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
     AssetResolution,
+    CompanyFilingTarget,
+    CompanyFilings,
     CompanyMetadata,
     CompanyMetadataTarget,
     EtfHolding,
     ExposurePath,
+    SecFiling,
     StructuralExposureItem,
 )
 from app.providers.base import (
     AssetDataProvider,
+    CompanyFilingsProvider,
     CompanyMetadataProvider,
     EtfHoldingsProvider,
 )
@@ -56,6 +61,28 @@ class FakeCompanyMetadataProvider(CompanyMetadataProvider):
         )
 
 
+class FakeCompanyFilingsProvider(CompanyFilingsProvider):
+    def get_recent_filings(self, cik: str, limit: int) -> CompanyFilings | None:
+        if cik != "0001045810":
+            return None
+        filing = SecFiling(
+            cik=cik,
+            accession_number="0001045810-26-000001",
+            form="10-K",
+            filing_date=date(2026, 2, 25),
+            report_date=date(2026, 1, 25),
+            primary_document="nvda-20260125.htm",
+            source_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/nvda-20260125.htm",
+            filing_index_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/0001045810-26-000001-index.html",
+            submissions_url="https://data.sec.gov/submissions/CIK0001045810.json",
+        )
+        return CompanyFilings(
+            cik=cik,
+            source_url="https://data.sec.gov/submissions/CIK0001045810.json",
+            filings=[filing][:limit],
+        )
+
+
 class FakeGraphRepository(GraphRepository):
     def __init__(self) -> None:
         self.metadata_synced = {}
@@ -74,6 +101,14 @@ class FakeGraphRepository(GraphRepository):
 
     def sync_company_metadata(self, company_metadata) -> None:
         self.metadata_synced = dict(company_metadata)
+
+    def get_company_filing_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[CompanyFilingTarget]:
+        return [CompanyFilingTarget(cik="0001045810", name="NVIDIA CORP")][:limit]
+
+    def sync_company_filings(self, company_filings) -> None:
+        self.filings_synced = dict(company_filings)
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -124,16 +159,21 @@ def test_graph_sync_and_paths_endpoints(client):
     original_etf_provider = graph_service.etf_holdings_provider
     original_company_provider = graph_service.company_asset_provider
     original_metadata_provider = graph_service.company_metadata_provider
+    original_filings_provider = graph_service.company_filings_provider
     graph_service.graph_repository = FakeGraphRepository()
     graph_service.etf_holdings_provider = FakeEtfHoldingsProvider()
     graph_service.company_asset_provider = FakeCompanyAssetProvider()
     graph_service.company_metadata_provider = FakeCompanyMetadataProvider()
+    graph_service.company_filings_provider = FakeCompanyFilingsProvider()
     try:
         sync_response = client.post(
             f"/api/v1/portfolios/{portfolio_id}/graph/sync"
         )
         metadata_response = client.post(
             f"/api/v1/portfolios/{portfolio_id}/graph/company-metadata/sync?limit=1"
+        )
+        filings_response = client.post(
+            f"/api/v1/portfolios/{portfolio_id}/graph/sec-filings/sync?company_limit=1&filings_per_company=1"
         )
         paths_response = client.get(
             f"/api/v1/portfolios/{portfolio_id}/graph/paths"
@@ -146,6 +186,7 @@ def test_graph_sync_and_paths_endpoints(client):
         graph_service.etf_holdings_provider = original_etf_provider
         graph_service.company_asset_provider = original_company_provider
         graph_service.company_metadata_provider = original_metadata_provider
+        graph_service.company_filings_provider = original_filings_provider
 
     assert sync_response.status_code == 200
     assert sync_response.json()["ownership_edges_synced"] == 2
@@ -160,6 +201,15 @@ def test_graph_sync_and_paths_endpoints(client):
     assert metadata_response.json()["industry_edges_synced"] == 1
     assert metadata_response.json()["country_edges_synced"] == 1
     assert metadata_response.json()["unresolved_company_ciks"] == []
+
+    assert filings_response.status_code == 200
+    assert filings_response.json() == {
+        "portfolio_id": portfolio_id,
+        "companies_requested": 1,
+        "companies_synced": 1,
+        "filings_synced": 1,
+        "unresolved_company_ciks": [],
+    }
 
     assert paths_response.status_code == 200
     assert paths_response.json()["paths"] == [

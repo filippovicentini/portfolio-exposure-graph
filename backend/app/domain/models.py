@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -145,6 +145,37 @@ class CompanyMetadataSyncResult(BaseModel):
     companies_enriched: int = Field(ge=0)
     industry_edges_synced: int = Field(ge=0)
     country_edges_synced: int = Field(ge=0)
+    unresolved_company_ciks: list[str] = Field(default_factory=list)
+
+
+class CompanyFilingTarget(BaseModel):
+    cik: str = Field(min_length=1, max_length=10)
+    name: str = Field(min_length=1)
+
+
+class SecFiling(BaseModel):
+    cik: str = Field(min_length=1, max_length=10)
+    accession_number: str = Field(min_length=1)
+    form: str = Field(pattern=r"^(10-K|10-Q)$")
+    filing_date: date
+    report_date: date | None = None
+    primary_document: str | None = None
+    source_url: str = Field(min_length=1)
+    filing_index_url: str = Field(min_length=1)
+    submissions_url: str = Field(min_length=1)
+
+
+class CompanyFilings(BaseModel):
+    cik: str = Field(min_length=1, max_length=10)
+    source_url: str = Field(min_length=1)
+    filings: list[SecFiling] = Field(default_factory=list)
+
+
+class CompanyFilingsSyncResult(BaseModel):
+    portfolio_id: UUID
+    companies_requested: int = Field(ge=0)
+    companies_synced: int = Field(ge=0)
+    filings_synced: int = Field(ge=0)
     unresolved_company_ciks: list[str] = Field(default_factory=list)
 
 

@@ -21,12 +21,12 @@ Implemented:
 - SEC submissions metadata for primary SIC industry and business-address country
 - `Company -> Industry` and `Company -> Country` structural graph edges
 - portfolio-weight aggregation by SEC primary industry and business-address country
+- bounded SEC 10-K/10-Q filing metadata ingestion into canonical Filing nodes
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
-- SEC filing ingestion
-- sourced supplier/dependency extraction
+- sourced supplier/dependency extraction from SEC filings
 - provenance on document-derived graph edges
 - small frontend
 
@@ -48,6 +48,8 @@ Portfolio
 Listed instruments remain `Asset` nodes because the same economic company can be represented by more than one security. When SEC ticker data provides a CIK, the graph creates one canonical `Company` node keyed by that CIK and links the asset with `REPRESENTS`. ETF constituents that cannot be resolved to a canonical company remain valid `Asset` nodes and are reported by graph sync.
 
 Company metadata enrichment is a separate bounded step. It reads the SEC submissions JSON for canonical companies and stores the SEC primary SIC classification as `OPERATES_IN` plus the SEC business-address country as `BASED_IN`. These are structural facts, not numeric exposure weights. The endpoint defaults to 25 companies per call so large ETFs do not trigger hundreds of SEC requests in one synchronous request.
+
+SEC filing ingestion is also bounded and currently stores only recent `10-K` and `10-Q` metadata. Each filing is a canonical `Filing` node keyed by SEC accession number and linked from its canonical company with `FILED`. The node keeps the filing date, report date, form, primary-document URL, filing-index URL, and submissions source URL. This increment deliberately does not download filing text or perform AI extraction yet.
 
 Structural exposure aggregation reuses only sourced numeric weights already present on `OWNS` and `HOLDS`. An industry bucket therefore means "portfolio/look-through weight whose canonical company has this SEC primary SIC". A country bucket means "portfolio/look-through weight whose canonical company has this SEC business-address country". It is not a revenue-by-country estimate, and no numeric weight is inferred from `OPERATES_IN` or `BASED_IN` themselves. Coverage fields report how much portfolio/look-through weight currently has metadata for each dimension.
 
@@ -90,6 +92,7 @@ POST /api/v1/portfolios
 GET  /api/v1/portfolios/{portfolio_id}/lookthrough
 POST /api/v1/portfolios/{portfolio_id}/graph/sync
 POST /api/v1/portfolios/{portfolio_id}/graph/company-metadata/sync?limit=25
+POST /api/v1/portfolios/{portfolio_id}/graph/sec-filings/sync?company_limit=5&filings_per_company=4
 GET  /api/v1/portfolios/{portfolio_id}/graph/paths
 GET  /api/v1/portfolios/{portfolio_id}/graph/structural-exposure
 ```

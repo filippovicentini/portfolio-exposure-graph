@@ -1,18 +1,23 @@
 from __future__ import annotations
 
+from datetime import date
 from uuid import UUID
 
 from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
     AssetResolution,
+    CompanyFilingTarget,
+    CompanyFilings,
     CompanyMetadata,
     CompanyMetadataTarget,
     EtfHolding,
     ExposurePath,
+    SecFiling,
     StructuralExposureItem,
 )
 from app.providers.base import (
     AssetDataProvider,
+    CompanyFilingsProvider,
     CompanyMetadataProvider,
     EtfHoldingsProvider,
 )
@@ -83,6 +88,49 @@ class FailingCompanyMetadataProvider(CompanyMetadataProvider):
         raise RuntimeError("metadata unavailable")
 
 
+class FakeCompanyFilingsProvider(CompanyFilingsProvider):
+    def get_recent_filings(self, cik: str, limit: int) -> CompanyFilings | None:
+        filings = {
+            "0001045810": [
+                SecFiling(
+                    cik="0001045810",
+                    accession_number="0001045810-26-000001",
+                    form="10-K",
+                    filing_date=date(2026, 2, 25),
+                    report_date=date(2026, 1, 25),
+                    primary_document="nvda-20260125.htm",
+                    source_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/nvda-20260125.htm",
+                    filing_index_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/0001045810-26-000001-index.html",
+                    submissions_url="https://data.sec.gov/submissions/CIK0001045810.json",
+                ),
+                SecFiling(
+                    cik="0001045810",
+                    accession_number="0001045810-25-000200",
+                    form="10-Q",
+                    filing_date=date(2025, 11, 19),
+                    report_date=date(2025, 10, 26),
+                    primary_document="nvda-20251026.htm",
+                    source_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581025000200/nvda-20251026.htm",
+                    filing_index_url="https://www.sec.gov/Archives/edgar/data/1045810/0001045810-25-000200-index.html",
+                    submissions_url="https://data.sec.gov/submissions/CIK0001045810.json",
+                ),
+            ]
+        }
+        company_filings = filings.get(cik)
+        if company_filings is None:
+            return None
+        return CompanyFilings(
+            cik=cik,
+            source_url=f"https://data.sec.gov/submissions/CIK{cik}.json",
+            filings=company_filings[:limit],
+        )
+
+
+class FailingCompanyFilingsProvider(CompanyFilingsProvider):
+    def get_recent_filings(self, cik: str, limit: int) -> CompanyFilings | None:
+        raise RuntimeError("filings unavailable")
+
+
 class FakeGraphRepository(GraphRepository):
     def __init__(self) -> None:
         self.synced_portfolio = None
@@ -90,6 +138,8 @@ class FakeGraphRepository(GraphRepository):
         self.synced_companies = None
         self.metadata_targets: list[CompanyMetadataTarget] = []
         self.synced_metadata = None
+        self.filing_targets: list[CompanyFilingTarget] = []
+        self.synced_filings = None
 
     def sync_portfolio(self, portfolio, etf_holdings, company_resolutions) -> None:
         self.synced_portfolio = portfolio
@@ -103,6 +153,14 @@ class FakeGraphRepository(GraphRepository):
 
     def sync_company_metadata(self, company_metadata) -> None:
         self.synced_metadata = dict(company_metadata)
+
+    def get_company_filing_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[CompanyFilingTarget]:
+        return self.filing_targets[:limit]
+
+    def sync_company_filings(self, company_filings) -> None:
+        self.synced_filings = dict(company_filings)
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -168,6 +226,7 @@ def test_graph_service_syncs_assets_etf_exposure_and_companies(
         etf_holdings_provider=FakeEtfHoldingsProvider(),
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
     )
 
     result = service.sync(portfolio_id)
@@ -204,6 +263,7 @@ def test_graph_service_keeps_graph_sync_available_when_company_provider_fails(
         etf_holdings_provider=FakeEtfHoldingsProvider(),
         company_asset_provider=FailingCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
     )
 
     result = service.sync(portfolio_id)
@@ -229,6 +289,7 @@ def test_graph_service_returns_paths(client, portfolio_repository):
         etf_holdings_provider=FakeEtfHoldingsProvider(),
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
     )
 
     result = service.get_paths(portfolio_id)
@@ -254,6 +315,7 @@ def test_graph_service_returns_structural_exposure_breakdown(
         etf_holdings_provider=FakeEtfHoldingsProvider(),
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
     )
 
     result = service.get_structural_exposure(portfolio_id)
@@ -286,6 +348,7 @@ def test_graph_service_syncs_company_metadata_in_bounded_batches(
         etf_holdings_provider=FakeEtfHoldingsProvider(),
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
     )
 
     result = service.sync_company_metadata(portfolio_id, limit=1)
@@ -317,6 +380,7 @@ def test_graph_service_company_metadata_failures_are_non_blocking(
         etf_holdings_provider=FakeEtfHoldingsProvider(),
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FailingCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
     )
 
     result = service.sync_company_metadata(portfolio_id)
@@ -328,3 +392,71 @@ def test_graph_service_company_metadata_failures_are_non_blocking(
     assert result.country_edges_synced == 0
     assert result.unresolved_company_ciks == ["0001045810"]
     assert graph_repository.synced_metadata == {}
+
+
+def test_graph_service_syncs_recent_company_filings_in_bounded_batches(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Filings", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.filing_targets = [
+        CompanyFilingTarget(cik="0001045810", name="NVIDIA CORP"),
+        CompanyFilingTarget(cik="0000320193", name="Apple Inc."),
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+    )
+
+    result = service.sync_company_filings(
+        portfolio_id,
+        company_limit=1,
+        filings_per_company=1,
+    )
+
+    assert result is not None
+    assert result.companies_requested == 1
+    assert result.companies_synced == 1
+    assert result.filings_synced == 1
+    assert result.unresolved_company_ciks == []
+    assert set(graph_repository.synced_filings) == {"0001045810"}
+    assert len(graph_repository.synced_filings["0001045810"].filings) == 1
+
+
+def test_graph_service_company_filing_failures_are_non_blocking(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Filings fallback", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.filing_targets = [
+        CompanyFilingTarget(cik="0001045810", name="NVIDIA CORP")
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FailingCompanyFilingsProvider(),
+    )
+
+    result = service.sync_company_filings(portfolio_id)
+
+    assert result is not None
+    assert result.companies_requested == 1
+    assert result.companies_synced == 0
+    assert result.filings_synced == 0
+    assert result.unresolved_company_ciks == ["0001045810"]
+    assert graph_repository.synced_filings == {}

@@ -8,82 +8,86 @@ The product question is intentionally narrow:
 
 ## Status
 
-**Milestone 1: foundation / vertical slice**
-
 Implemented:
 
-- FastAPI backend
-- portfolio input with strict weight validation
-- ticker normalization
-- asset registry abstraction
-- non-blocking handling of unseen tickers
-- enrichment job abstraction
-- explicit domain model for equities vs ETFs
-- graph schema v0.1
-- PostgreSQL + Neo4j local infrastructure definition
-- unit/API tests
+- FastAPI backend and portfolio weight validation
+- dynamic equity resolution through SEC ticker data
+- dynamic US ETF recognition through Alpha Vantage listing data
+- ETF holdings ingestion and one-level look-through
+- direct + indirect exposure aggregation
+- Neo4j local infrastructure
+- Neo4j graph repository for `Portfolio -> Asset` and `ETF -> Asset` paths
+- mocked provider/repository tests that do not require external services
 
-Not implemented yet:
+Next milestones:
 
-- external ticker provider
-- SEC ingestion
-- ETF holdings ingestion
-- Neo4j persistence
-- LLM relationship extraction
-- frontend
+- canonical `Company` nodes and `Asset -> Company` resolution
+- SEC filing ingestion
+- sourced supplier/dependency extraction
+- provenance on document-derived graph edges
+- small frontend
 
-## Key design decision: unseen tickers
+Out of scope for the MVP: price prediction, trading recommendations, portfolio optimization, broker integration, and real-time market data.
 
-The application is not based on a manually pre-mapped ticker universe.
+## Architecture today
 
-When an asset is already known, it is returned immediately as `ready`. When a syntactically valid but unseen ticker is submitted, the portfolio is still created and the asset is marked `pending_enrichment`. An enrichment job is queued so a provider-backed pipeline can resolve the ticker and construct its graph data later.
+```text
+Portfolio
+  |-- OWNS --> Equity
+  `-- OWNS --> ETF
+                 `-- HOLDS --> Asset
+```
 
-This enables lazy indexing and a shared knowledge graph rather than rebuilding company data per user.
+The graph layer intentionally stores ETF constituents as `Asset` nodes first. Canonical company resolution comes later, so the system does not claim a legal-entity mapping that has not yet been established.
 
-## Run the API
+## Environment
+
+External provider credentials are read from environment variables:
 
 ```bash
-cd backend
-python -m venv .venv
+export SEC_USER_AGENT="Portfolio Exposure Graph your-email@example.com"
+export ALPHA_VANTAGE_API_KEY="..."
+```
+
+Neo4j defaults match the local `docker-compose.yml`, and can be overridden:
+
+```bash
+export NEO4J_URI="bolt://localhost:7687"
+export NEO4J_USER="neo4j"
+export NEO4J_PASSWORD="portfolioexposure"
+export NEO4J_DATABASE="neo4j"
+```
+
+## Run locally
+
+From the repository root:
+
+```bash
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
+docker compose up -d neo4j
+cd backend
 uvicorn app.main:app --reload
 ```
 
 Open API docs at `http://127.0.0.1:8000/docs`.
 
-## Example
+Useful endpoints include:
 
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/portfolios \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "Demo",
-    "positions": [
-      {"ticker": "NVDA", "weight_pct": 70},
-      {"ticker": "ASML", "weight_pct": 30}
-    ]
-  }'
+```text
+POST /api/v1/portfolios
+GET  /api/v1/portfolios/{portfolio_id}/lookthrough
+POST /api/v1/portfolios/{portfolio_id}/graph/sync
+GET  /api/v1/portfolios/{portfolio_id}/graph/paths
 ```
-
-`NVDA` is part of the tiny development seed registry, while `ASML` demonstrates the desired cache-miss behavior and is queued for enrichment.
 
 ## Test
 
 ```bash
 cd backend
-pytest -q
+python -m pytest
 ```
 
-## Local data services
-
-The future persistence layer is already represented in `docker-compose.yml`:
-
-```bash
-docker compose up -d
-```
-
-- PostgreSQL: application state, documents, jobs, portfolios
-- Neo4j: shared economic knowledge graph
+Provider tests use mocks. The normal test suite does not require SEC, Alpha Vantage, or a running Neo4j instance.
 
 See [`docs/graph-schema.md`](docs/graph-schema.md) and [`docs/mvp.md`](docs/mvp.md).

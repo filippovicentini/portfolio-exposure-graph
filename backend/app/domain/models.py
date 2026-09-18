@@ -89,3 +89,22 @@ class PortfolioLookthrough(BaseModel):
     portfolio_id: UUID
     exposures: list[ExposureBreakdown]
     unexpanded_etfs: list[str] = Field(default_factory=list)
+
+
+class ExposurePath(BaseModel):
+    asset_path: list[str] = Field(min_length=1)
+    relations: list[str] = Field(min_length=1)
+    effective_weight_pct: float = Field(ge=0)
+
+
+class GraphSyncResult(BaseModel):
+    portfolio_id: UUID
+    assets_synced: int = Field(ge=0)
+    ownership_edges_synced: int = Field(ge=0)
+    holding_edges_synced: int = Field(ge=0)
+    unexpanded_etfs: list[str] = Field(default_factory=list)
+
+
+class PortfolioExposurePaths(BaseModel):
+    portfolio_id: UUID
+    paths: list[ExposurePath] = Field(default_factory=list)

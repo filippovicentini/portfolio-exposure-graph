@@ -11,6 +11,7 @@ from app.domain.models import (
     EtfHolding,
     ExposurePath,
     Portfolio,
+    StructuralExposureItem,
 )
 
 
@@ -43,6 +44,20 @@ class GraphRepository(ABC):
         self,
         company_metadata: Mapping[str, CompanyMetadata],
     ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_industry_exposures(
+        self,
+        portfolio_id: UUID,
+    ) -> list[StructuralExposureItem]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_country_exposures(
+        self,
+        portfolio_id: UUID,
+    ) -> list[StructuralExposureItem]:
         raise NotImplementedError
 
     def close(self) -> None:

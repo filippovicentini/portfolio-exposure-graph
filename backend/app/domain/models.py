@@ -146,3 +146,19 @@ class CompanyMetadataSyncResult(BaseModel):
     industry_edges_synced: int = Field(ge=0)
     country_edges_synced: int = Field(ge=0)
     unresolved_company_ciks: list[str] = Field(default_factory=list)
+
+
+class StructuralExposureItem(BaseModel):
+    code: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    weight_pct: float = Field(ge=0)
+
+
+class PortfolioStructuralExposure(BaseModel):
+    portfolio_id: UUID
+    industries: list[StructuralExposureItem] = Field(default_factory=list)
+    countries: list[StructuralExposureItem] = Field(default_factory=list)
+    industry_coverage_pct: float = Field(ge=0)
+    country_coverage_pct: float = Field(ge=0)
+    industry_basis: str = "SEC primary SIC"
+    country_basis: str = "SEC business address"

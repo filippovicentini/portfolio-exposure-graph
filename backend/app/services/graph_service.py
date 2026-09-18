@@ -10,6 +10,7 @@ from app.domain.models import (
     CompanyResolution,
     GraphSyncResult,
     PortfolioExposurePaths,
+    PortfolioStructuralExposure,
 )
 from app.providers.base import (
     AssetDataProvider,
@@ -165,6 +166,29 @@ class GraphService:
         return PortfolioExposurePaths(
             portfolio_id=portfolio_id,
             paths=self.graph_repository.get_exposure_paths(portfolio_id),
+        )
+
+    def get_structural_exposure(
+        self,
+        portfolio_id: UUID,
+    ) -> PortfolioStructuralExposure | None:
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+
+        industries = self.graph_repository.get_industry_exposures(portfolio_id)
+        countries = self.graph_repository.get_country_exposures(portfolio_id)
+        return PortfolioStructuralExposure(
+            portfolio_id=portfolio_id,
+            industries=industries,
+            countries=countries,
+            industry_coverage_pct=round(
+                sum(item.weight_pct for item in industries),
+                6,
+            ),
+            country_coverage_pct=round(
+                sum(item.weight_pct for item in countries),
+                6,
+            ),
         )
 
     def _resolve_companies(

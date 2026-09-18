@@ -13,6 +13,7 @@ from app.domain.models import (
     EtfHolding,
     ExposurePath,
     Portfolio,
+    StructuralExposureItem,
 )
 from app.repositories.graph_repository import GraphRepository
 
@@ -156,6 +157,36 @@ class Neo4jGraphRepository(GraphRepository):
     RETURN [etf.ticker, asset.ticker] AS asset_path,
            ['OWNS', 'HOLDS'] AS relations,
            owns.weight_pct * holds.weight_pct / 100.0 AS effective_weight_pct
+    """
+
+    INDUSTRY_EXPOSURES_QUERY = """
+    CALL () {
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(asset:Asset)-[:REPRESENTS]->(company:Company)
+        RETURN company, owns.weight_pct AS effective_weight_pct
+        UNION ALL
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(etf:Asset:ETF)-[holds:HOLDS]->(asset:Asset)-[:REPRESENTS]->(company:Company)
+        RETURN company, owns.weight_pct * holds.weight_pct / 100.0 AS effective_weight_pct
+    }
+    MATCH (company)-[:OPERATES_IN]->(industry:Industry)
+    RETURN industry.sic AS code,
+           industry.name AS name,
+           sum(effective_weight_pct) AS weight_pct
+    ORDER BY weight_pct DESC, name ASC
+    """
+
+    COUNTRY_EXPOSURES_QUERY = """
+    CALL () {
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(asset:Asset)-[:REPRESENTS]->(company:Company)
+        RETURN company, owns.weight_pct AS effective_weight_pct
+        UNION ALL
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(etf:Asset:ETF)-[holds:HOLDS]->(asset:Asset)-[:REPRESENTS]->(company:Company)
+        RETURN company, owns.weight_pct * holds.weight_pct / 100.0 AS effective_weight_pct
+    }
+    MATCH (company)-[:BASED_IN]->(country:Country)
+    RETURN country.sec_code AS code,
+           country.name AS name,
+           sum(effective_weight_pct) AS weight_pct
+    ORDER BY weight_pct DESC, name ASC
     """
 
     def __init__(
@@ -338,6 +369,43 @@ class Neo4jGraphRepository(GraphRepository):
         ]
         paths.sort(key=lambda item: (-item.effective_weight_pct, item.asset_path))
         return paths
+
+    def get_industry_exposures(
+        self,
+        portfolio_id: UUID,
+    ) -> list[StructuralExposureItem]:
+        return self._get_structural_exposures(
+            self.INDUSTRY_EXPOSURES_QUERY,
+            portfolio_id,
+        )
+
+    def get_country_exposures(
+        self,
+        portfolio_id: UUID,
+    ) -> list[StructuralExposureItem]:
+        return self._get_structural_exposures(
+            self.COUNTRY_EXPOSURES_QUERY,
+            portfolio_id,
+        )
+
+    def _get_structural_exposures(
+        self,
+        query: str,
+        portfolio_id: UUID,
+    ) -> list[StructuralExposureItem]:
+        records, _, _ = self.driver.execute_query(
+            query,
+            portfolio_id=str(portfolio_id),
+            database_=self.database,
+        )
+        return [
+            StructuralExposureItem(
+                code=str(record["code"]),
+                name=str(record["name"]),
+                weight_pct=round(float(record["weight_pct"]), 6),
+            )
+            for record in records
+        ]
 
     def close(self) -> None:
         self.driver.close()

@@ -9,6 +9,7 @@ from app.domain.models import (
     CompanyMetadataTarget,
     EtfHolding,
     ExposurePath,
+    StructuralExposureItem,
 )
 from app.providers.base import (
     AssetDataProvider,
@@ -117,6 +118,33 @@ class FakeGraphRepository(GraphRepository):
             ),
         ]
 
+    def get_industry_exposures(
+        self, portfolio_id: UUID
+    ) -> list[StructuralExposureItem]:
+        return [
+            StructuralExposureItem(
+                code="3674",
+                name="Semiconductors & Related Devices",
+                weight_pct=72.4,
+            ),
+            StructuralExposureItem(
+                code="3571",
+                name="Electronic Computers",
+                weight_pct=2.1,
+            ),
+        ]
+
+    def get_country_exposures(
+        self, portfolio_id: UUID
+    ) -> list[StructuralExposureItem]:
+        return [
+            StructuralExposureItem(
+                code="X1",
+                name="UNITED STATES",
+                weight_pct=74.5,
+            )
+        ]
+
 
 def test_graph_service_syncs_assets_etf_exposure_and_companies(
     client, portfolio_repository
@@ -210,6 +238,34 @@ def test_graph_service_returns_paths(client, portfolio_repository):
     assert result.paths[1].asset_path == ["QQQ", "NVDA"]
     assert result.paths[1].effective_weight_pct == 2.4
 
+
+def test_graph_service_returns_structural_exposure_breakdown(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Structural", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=FakeGraphRepository(),
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+    )
+
+    result = service.get_structural_exposure(portfolio_id)
+
+    assert result is not None
+    assert result.industries[0].code == "3674"
+    assert result.industries[0].weight_pct == 72.4
+    assert result.countries[0].code == "X1"
+    assert result.industry_coverage_pct == 74.5
+    assert result.country_coverage_pct == 74.5
+    assert result.industry_basis == "SEC primary SIC"
+    assert result.country_basis == "SEC business address"
 
 def test_graph_service_syncs_company_metadata_in_bounded_batches(
     client, portfolio_repository

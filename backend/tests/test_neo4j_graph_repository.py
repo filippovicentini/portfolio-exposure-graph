@@ -25,9 +25,15 @@ class FakeDriver:
         self.closed = False
         self.path_records = []
         self.metadata_target_records = []
+        self.industry_exposure_records = []
+        self.country_exposure_records = []
 
     def execute_query(self, query, **kwargs):
         self.calls.append((query, kwargs))
+        if "industry.sic AS code" in query:
+            return self.industry_exposure_records, SimpleNamespace(), []
+        if "country.sec_code AS code" in query:
+            return self.country_exposure_records, SimpleNamespace(), []
         if "effective_weight_pct" in query:
             return self.path_records, SimpleNamespace(), []
         if "'sec_metadata_synced_at' IN keys(company)" in query:
@@ -196,6 +202,48 @@ def test_neo4j_repository_parses_exposure_paths():
     assert paths[0].relations == ["OWNS", "HOLDS"]
     assert paths[0].effective_weight_pct == 2.4
 
+
+
+def test_neo4j_repository_aggregates_structural_exposures():
+    driver = FakeDriver()
+    driver.industry_exposure_records = [
+        FakeRecord(
+            code="3674",
+            name="Semiconductors & Related Devices",
+            weight_pct=72.400000001,
+        )
+    ]
+    driver.country_exposure_records = [
+        FakeRecord(
+            code="X1",
+            name="UNITED STATES",
+            weight_pct=74.500000001,
+        )
+    ]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused",
+        user="neo4j",
+        password="test",
+        driver=driver,
+    )
+    portfolio_id = uuid4()
+
+    industries = repository.get_industry_exposures(portfolio_id)
+    countries = repository.get_country_exposures(portfolio_id)
+
+    assert industries[0].code == "3674"
+    assert industries[0].weight_pct == 72.4
+    assert countries[0].code == "X1"
+    assert countries[0].weight_pct == 74.5
+
+    industry_query, industry_call = driver.calls[0]
+    assert "owns.weight_pct * holds.weight_pct / 100.0" in industry_query
+    assert "MATCH (company)-[:OPERATES_IN]->(industry:Industry)" in industry_query
+    assert industry_call["portfolio_id"] == str(portfolio_id)
+
+    country_query, country_call = driver.calls[1]
+    assert "MATCH (company)-[:BASED_IN]->(country:Country)" in country_query
+    assert country_call["portfolio_id"] == str(portfolio_id)
 
 def test_neo4j_repository_closes_driver():
     driver = FakeDriver()

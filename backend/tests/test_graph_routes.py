@@ -10,6 +10,7 @@ from app.domain.models import (
     CompanyMetadataTarget,
     EtfHolding,
     ExposurePath,
+    StructuralExposureItem,
 )
 from app.providers.base import (
     AssetDataProvider,
@@ -83,6 +84,28 @@ class FakeGraphRepository(GraphRepository):
             )
         ]
 
+    def get_industry_exposures(
+        self, portfolio_id: UUID
+    ) -> list[StructuralExposureItem]:
+        return [
+            StructuralExposureItem(
+                code="3674",
+                name="Semiconductors & Related Devices",
+                weight_pct=72.4,
+            )
+        ]
+
+    def get_country_exposures(
+        self, portfolio_id: UUID
+    ) -> list[StructuralExposureItem]:
+        return [
+            StructuralExposureItem(
+                code="X1",
+                name="UNITED STATES",
+                weight_pct=72.4,
+            )
+        ]
+
 
 def test_graph_sync_and_paths_endpoints(client):
     created = client.post(
@@ -115,6 +138,9 @@ def test_graph_sync_and_paths_endpoints(client):
         paths_response = client.get(
             f"/api/v1/portfolios/{portfolio_id}/graph/paths"
         )
+        structural_response = client.get(
+            f"/api/v1/portfolios/{portfolio_id}/graph/structural-exposure"
+        )
     finally:
         graph_service.graph_repository = original_repository
         graph_service.etf_holdings_provider = original_etf_provider
@@ -143,3 +169,25 @@ def test_graph_sync_and_paths_endpoints(client):
             "effective_weight_pct": 2.4,
         }
     ]
+    assert structural_response.status_code == 200
+    assert structural_response.json() == {
+        "portfolio_id": portfolio_id,
+        "industries": [
+            {
+                "code": "3674",
+                "name": "Semiconductors & Related Devices",
+                "weight_pct": 72.4,
+            }
+        ],
+        "countries": [
+            {
+                "code": "X1",
+                "name": "UNITED STATES",
+                "weight_pct": 72.4,
+            }
+        ],
+        "industry_coverage_pct": 72.4,
+        "country_coverage_pct": 72.4,
+        "industry_basis": "SEC primary SIC",
+        "country_basis": "SEC business address",
+    }

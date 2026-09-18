@@ -89,6 +89,20 @@ class CompanyResolution(BaseModel):
         return value.strip().upper()
 
 
+class CompanyMetadataTarget(BaseModel):
+    cik: str = Field(min_length=1, max_length=10)
+    name: str = Field(min_length=1)
+
+
+class CompanyMetadata(BaseModel):
+    cik: str = Field(min_length=1, max_length=10)
+    industry_code: str | None = None
+    industry_name: str | None = None
+    country_code: str | None = None
+    country_name: str | None = None
+    source_url: str = Field(min_length=1)
+
+
 class ExposureBreakdown(BaseModel):
     ticker: str
     direct_weight_pct: float
@@ -123,3 +137,12 @@ class GraphSyncResult(BaseModel):
 class PortfolioExposurePaths(BaseModel):
     portfolio_id: UUID
     paths: list[ExposurePath] = Field(default_factory=list)
+
+
+class CompanyMetadataSyncResult(BaseModel):
+    portfolio_id: UUID
+    companies_requested: int = Field(ge=0)
+    companies_enriched: int = Field(ge=0)
+    industry_edges_synced: int = Field(ge=0)
+    country_edges_synced: int = Field(ge=0)
+    unresolved_company_ciks: list[str] = Field(default_factory=list)

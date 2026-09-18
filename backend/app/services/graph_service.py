@@ -4,8 +4,18 @@ import logging
 from uuid import UUID
 
 from app.domain.enums import AssetStatus, AssetType
-from app.domain.models import CompanyResolution, GraphSyncResult, PortfolioExposurePaths
-from app.providers.base import AssetDataProvider, EtfHoldingsProvider
+from app.domain.models import (
+    CompanyMetadata,
+    CompanyMetadataSyncResult,
+    CompanyResolution,
+    GraphSyncResult,
+    PortfolioExposurePaths,
+)
+from app.providers.base import (
+    AssetDataProvider,
+    CompanyMetadataProvider,
+    EtfHoldingsProvider,
+)
 from app.repositories.graph_repository import GraphRepository
 from app.repositories.portfolio_repository import PortfolioRepository
 
@@ -21,11 +31,13 @@ class GraphService:
         graph_repository: GraphRepository,
         etf_holdings_provider: EtfHoldingsProvider,
         company_asset_provider: AssetDataProvider,
+        company_metadata_provider: CompanyMetadataProvider,
     ) -> None:
         self.portfolio_repository = portfolio_repository
         self.graph_repository = graph_repository
         self.etf_holdings_provider = etf_holdings_provider
         self.company_asset_provider = company_asset_provider
+        self.company_metadata_provider = company_metadata_provider
 
     def sync(self, portfolio_id: UUID) -> GraphSyncResult | None:
         portfolio = self.portfolio_repository.get(portfolio_id)
@@ -94,6 +106,57 @@ class GraphService:
             represents_edges_synced=len(company_resolutions),
             unexpanded_etfs=sorted(set(unexpanded_etfs)),
             unresolved_company_assets=unresolved_company_assets,
+        )
+
+
+    def sync_company_metadata(
+        self,
+        portfolio_id: UUID,
+        limit: int = 25,
+    ) -> CompanyMetadataSyncResult | None:
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+
+        targets = self.graph_repository.get_company_metadata_targets(
+            portfolio_id,
+            limit=limit,
+        )
+        metadata_by_cik: dict[str, CompanyMetadata] = {}
+        unresolved: list[str] = []
+
+        for target in targets:
+            try:
+                metadata = self.company_metadata_provider.get_metadata(target.cik)
+            except Exception:
+                logger.exception(
+                    "Company metadata provider failed for CIK %s",
+                    target.cik,
+                )
+                unresolved.append(target.cik)
+                continue
+
+            if metadata is None:
+                unresolved.append(target.cik)
+                continue
+            metadata_by_cik[target.cik] = metadata
+
+        self.graph_repository.sync_company_metadata(metadata_by_cik)
+
+        return CompanyMetadataSyncResult(
+            portfolio_id=portfolio_id,
+            companies_requested=len(targets),
+            companies_enriched=len(metadata_by_cik),
+            industry_edges_synced=sum(
+                1
+                for item in metadata_by_cik.values()
+                if item.industry_code and item.industry_name
+            ),
+            country_edges_synced=sum(
+                1
+                for item in metadata_by_cik.values()
+                if item.country_code and item.country_name
+            ),
+            unresolved_company_ciks=sorted(set(unresolved)),
         )
 
     def get_paths(self, portfolio_id: UUID) -> PortfolioExposurePaths | None:

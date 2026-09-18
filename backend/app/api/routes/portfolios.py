@@ -1,9 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import graph_service, lookthrough_service, portfolio_service
 from app.domain.models import (
+    CompanyMetadataSyncResult,
     GraphSyncResult,
     Portfolio,
     PortfolioCreate,
@@ -38,6 +39,20 @@ def get_portfolio_lookthrough(portfolio_id: UUID) -> PortfolioLookthrough:
 @router.post("/{portfolio_id}/graph/sync", response_model=GraphSyncResult)
 def sync_portfolio_graph(portfolio_id: UUID) -> GraphSyncResult:
     result = graph_service.sync(portfolio_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/company-metadata/sync",
+    response_model=CompanyMetadataSyncResult,
+)
+def sync_portfolio_company_metadata(
+    portfolio_id: UUID,
+    limit: int = Query(default=25, ge=1, le=100),
+) -> CompanyMetadataSyncResult:
+    result = graph_service.sync_company_metadata(portfolio_id, limit=limit)
     if result is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     return result

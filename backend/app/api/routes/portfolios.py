@@ -10,6 +10,7 @@ from app.domain.models import (
     PortfolioCreate,
     PortfolioExposurePaths,
     PortfolioLookthrough,
+    PortfolioStructuralExposure,
 )
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
@@ -61,6 +62,19 @@ def sync_portfolio_company_metadata(
 @router.get("/{portfolio_id}/graph/paths", response_model=PortfolioExposurePaths)
 def get_portfolio_graph_paths(portfolio_id: UUID) -> PortfolioExposurePaths:
     result = graph_service.get_paths(portfolio_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.get(
+    "/{portfolio_id}/graph/structural-exposure",
+    response_model=PortfolioStructuralExposure,
+)
+def get_portfolio_structural_exposure(
+    portfolio_id: UUID,
+) -> PortfolioStructuralExposure:
+    result = graph_service.get_structural_exposure(portfolio_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     return result

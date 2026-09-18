@@ -10,7 +10,8 @@
 6. Build a shared company knowledge graph with SEC-backed company identity, primary industry, and business-address country metadata.
 7. Store evidence/provenance for document-derived edges.
 8. Return exposure paths explaining why a portfolio is connected to an entity.
-9. Provide a small interactive web UI.
+9. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.
+10. Provide a small interactive web UI.
 
 ## Explicitly out of scope
 

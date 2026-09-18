@@ -64,3 +64,28 @@ class Portfolio(BaseModel):
     positions: list[PortfolioPosition]
     enrichment_jobs: list[EnrichmentJob] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class EtfHolding(BaseModel):
+    ticker: str = Field(min_length=1, max_length=24)
+    description: str | None = None
+    weight_pct: float = Field(ge=0, le=100)
+
+    @field_validator("ticker")
+    @classmethod
+    def normalize_holding_ticker(cls, value: str) -> str:
+        return value.strip().upper()
+
+
+class ExposureBreakdown(BaseModel):
+    ticker: str
+    direct_weight_pct: float
+    indirect_weight_pct: float
+    total_weight_pct: float
+    via_etfs: list[str] = Field(default_factory=list)
+
+
+class PortfolioLookthrough(BaseModel):
+    portfolio_id: UUID
+    exposures: list[ExposureBreakdown]
+    unexpanded_etfs: list[str] = Field(default_factory=list)

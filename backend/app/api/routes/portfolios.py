@@ -2,8 +2,8 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.domain.models import Portfolio, PortfolioCreate
-from app.dependencies import portfolio_service
+from app.dependencies import lookthrough_service, portfolio_service
+from app.domain.models import Portfolio, PortfolioCreate, PortfolioLookthrough
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
 
@@ -19,3 +19,11 @@ def get_portfolio(portfolio_id: UUID) -> Portfolio:
     if portfolio is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     return portfolio
+
+
+@router.get("/{portfolio_id}/lookthrough", response_model=PortfolioLookthrough)
+def get_portfolio_lookthrough(portfolio_id: UUID) -> PortfolioLookthrough:
+    lookthrough = lookthrough_service.calculate(portfolio_id)
+    if lookthrough is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return lookthrough

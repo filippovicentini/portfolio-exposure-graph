@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from app.domain.models import AssetResolution
+from app.domain.models import AssetResolution, EtfHolding
 
 
 class AssetDataProvider(ABC):
@@ -10,4 +10,12 @@ class AssetDataProvider(ABC):
 
     @abstractmethod
     def resolve(self, ticker: str) -> AssetResolution | None:
+        raise NotImplementedError
+
+
+class EtfHoldingsProvider(ABC):
+    """Return the latest known holdings for an ETF ticker."""
+
+    @abstractmethod
+    def get_holdings(self, ticker: str) -> list[EtfHolding]:
         raise NotImplementedError

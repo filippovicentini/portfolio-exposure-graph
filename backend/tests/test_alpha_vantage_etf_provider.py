@@ -20,12 +20,17 @@ def test_provider_parses_holdings_and_caches_response():
                     {
                         "symbol": "NVDA",
                         "description": "NVIDIA Corporation",
-                        "weight": "8.00",
+                        "weight": "0.08",
                     },
                     {
                         "symbol": "AAPL",
                         "description": "Apple Inc",
-                        "weight": "7.50",
+                        "weight": "0.075",
+                    },
+                    {
+                        "symbol": "N/A",
+                        "description": "Cash or non-security allocation",
+                        "weight": "0.01",
                     },
                 ]
             },
@@ -42,6 +47,7 @@ def test_provider_parses_holdings_and_caches_response():
     assert first[0].ticker == "NVDA"
     assert first[0].weight_pct == 8.0
     assert first[1].description == "Apple Inc"
+    assert len(first) == 2
 
 
 def test_provider_requires_api_key():

@@ -62,17 +62,23 @@ class AlphaVantageEtfProvider(EtfHoldingsProvider):
             if not symbol or weight is None:
                 continue
 
+            normalized_symbol = str(symbol).strip().upper()
+            if normalized_symbol in {"N/A", "NA", "NONE", "-"}:
+                continue
+
             try:
-                weight_pct = float(weight)
+                weight_fraction = float(weight)
             except (TypeError, ValueError):
                 continue
 
-            if not 0 <= weight_pct <= 100:
+            # Alpha Vantage ETF_PROFILE returns holding weights as 0..1 fractions.
+            if not 0 <= weight_fraction <= 1:
                 continue
+            weight_pct = weight_fraction * 100.0
 
             holdings.append(
                 EtfHolding(
-                    ticker=str(symbol),
+                    ticker=normalized_symbol,
                     description=raw.get("description"),
                     weight_pct=weight_pct,
                 )

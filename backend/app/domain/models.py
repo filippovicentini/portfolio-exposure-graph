@@ -179,6 +179,42 @@ class CompanyFilingsSyncResult(BaseModel):
     unresolved_company_ciks: list[str] = Field(default_factory=list)
 
 
+class FilingEvidenceTarget(BaseModel):
+    accession_number: str = Field(min_length=1)
+    cik: str = Field(min_length=1, max_length=10)
+    form: str = Field(pattern=r"^(10-K|10-Q)$")
+    filing_date: date
+    source_url: str = Field(min_length=1)
+
+
+class FilingEvidence(BaseModel):
+    evidence_id: str = Field(min_length=1)
+    accession_number: str = Field(min_length=1)
+    evidence_type: str = Field(min_length=1)
+    evidence_text: str = Field(min_length=1)
+    matched_terms: list[str] = Field(default_factory=list)
+    source_url: str = Field(min_length=1)
+    source_date: date
+    extraction_method: str = Field(min_length=1)
+
+
+class FilingEvidenceBatch(BaseModel):
+    accession_number: str = Field(min_length=1)
+    source_url: str = Field(min_length=1)
+    extraction_method: str = Field(min_length=1)
+    evidence: list[FilingEvidence] = Field(default_factory=list)
+
+
+class FilingEvidenceSyncResult(BaseModel):
+    portfolio_id: UUID
+    filings_requested: int = Field(ge=0)
+    filings_processed: int = Field(ge=0)
+    filings_with_evidence: int = Field(ge=0)
+    evidence_synced: int = Field(ge=0)
+    filings_without_evidence: list[str] = Field(default_factory=list)
+    unresolved_filing_accessions: list[str] = Field(default_factory=list)
+
+
 class StructuralExposureItem(BaseModel):
     code: str = Field(min_length=1)
     name: str = Field(min_length=1)

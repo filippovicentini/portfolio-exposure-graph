@@ -28,6 +28,7 @@ class NodeType(str, Enum):
     COUNTRY = "country"
     SUPPLIER = "supplier"
     FILING = "filing"
+    EVIDENCE = "evidence"
     THEME = "theme"
 
 
@@ -39,4 +40,5 @@ class RelationType(str, Enum):
     BASED_IN = "BASED_IN"
     DEPENDS_ON = "DEPENDS_ON"
     FILED = "FILED"
+    CONTAINS_EVIDENCE = "CONTAINS_EVIDENCE"
     EXPOSED_TO = "EXPOSED_TO"

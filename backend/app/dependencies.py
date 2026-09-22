@@ -2,6 +2,7 @@ from app.core.config import settings
 from app.providers.alpha_vantage_etf_provider import AlphaVantageEtfProvider
 from app.providers.sec_asset_provider import SecAssetProvider
 from app.providers.sec_company_metadata_provider import SecCompanyMetadataProvider
+from app.providers.sec_filing_evidence_provider import SecFilingEvidenceProvider
 from app.providers.sec_filings_provider import SecFilingsProvider
 from app.repositories.asset_registry import InMemoryAssetRegistry
 from app.repositories.neo4j_graph_repository import Neo4jGraphRepository
@@ -20,6 +21,7 @@ sec_company_metadata_provider = SecCompanyMetadataProvider(
     user_agent=settings.sec_user_agent
 )
 sec_filings_provider = SecFilingsProvider(user_agent=settings.sec_user_agent)
+sec_filing_evidence_provider = SecFilingEvidenceProvider(user_agent=settings.sec_user_agent)
 alpha_vantage_etf_provider = AlphaVantageEtfProvider(
     api_key=settings.alpha_vantage_api_key
 )
@@ -50,4 +52,5 @@ graph_service = GraphService(
     company_asset_provider=sec_asset_provider,
     company_metadata_provider=sec_company_metadata_provider,
     company_filings_provider=sec_filings_provider,
+    filing_evidence_provider=sec_filing_evidence_provider,
 )

@@ -16,6 +16,7 @@ The graph answers one product question:
 | `Country` | Geographic exposure/entity |
 | `Supplier` | Company acting as an upstream dependency |
 | `Filing` | Canonical SEC filing / source document keyed by accession number |
+| `Evidence` | Traceable excerpt extracted from a source document; not a graph fact by itself |
 | `Theme` | Economic/technology theme |
 
 ## Relationship types
@@ -29,6 +30,7 @@ The graph answers one product question:
 | `BASED_IN` | Company -> Country | Structural |
 | `DEPENDS_ON` | Company -> Supplier | Structural |
 | `FILED` | Company -> Filing | Provenance / source document |
+| `CONTAINS_EVIDENCE` | Filing -> Evidence | Provenance / extracted source excerpt |
 | `EXPOSED_TO` | Company -> Theme | Structural |
 
 ## Provenance rule
@@ -58,11 +60,12 @@ The graph separates listed instruments from canonical companies:
 - SEC submissions metadata can link `Company` to `Industry` through `[:OPERATES_IN]`; the industry key is the SEC SIC code.
 - SEC business-address metadata can link `Company` to `Country` through `[:BASED_IN]`; the country key is the normalized SEC/EDGAR country code.
 - Recent SEC `10-K` and `10-Q` submissions are stored as `(:Filing {accession_number})` nodes and linked with `(:Company)-[:FILED]->(:Filing)`. The filing node stores document URLs and dates so later document-derived edges can point back to a stable source document.
+- Filing excerpts selected by deterministic dependency keywords are stored as `(:Evidence {evidence_id})` nodes and linked with `(:Filing)-[:CONTAINS_EVIDENCE]->(:Evidence)`. Evidence stores the source document accession number, URL, filing date, matched terms, excerpt text, and extraction method.
 
 `OPERATES_IN` currently means the company's primary SEC SIC classification, not an inferred list of every industry in which it participates. `BASED_IN` currently means the country derived from the SEC business address, not geographic revenue exposure. U.S. state codes are normalized to EDGAR code `X1` (United States), and Canadian province codes to `Z4` (Canada).
 
 Portfolio structural breakdowns aggregate sourced `OWNS` weights and one-level `OWNS * HOLDS` look-through weights by these structural classifications. The classification edges themselves do not add a numeric multiplier. `industry_coverage_pct` and `country_coverage_pct` are therefore the summed portfolio/look-through weights for assets whose canonical companies currently have the corresponding metadata.
 
-Filing ingestion is deliberately metadata-only at this milestone. It records recent SEC annual and quarterly filings and their source URLs but does not yet download filing contents or infer suppliers, dependencies, themes, or numeric impacts.
+Filing evidence extraction downloads source documents only in a bounded explicit sync step. The current extractor is deterministic and conservative: it records strong supply-chain terms directly, while supplier/vendor and generic dependency terms require manufacturing/supply context in the same sentence before becoming `dependency_candidate` evidence. Evidence is provenance, not a trusted dependency edge, and no supplier identity, confidence score, theme, or numeric impact is inferred at this milestone.
 
 Company resolution is deliberately best-effort. A provider failure or an unresolved ETF constituent does not block portfolio graph sync; the asset remains in the graph and the sync response reports its ticker in `unresolved_company_assets`. Company metadata enrichment is also best-effort and runs in bounded batches so a large ETF does not cause hundreds of SEC requests in a single synchronous operation. Successfully enriched companies are marked with `sec_metadata_synced_at` and the SEC source URL so the shared graph can reuse the metadata across portfolios.

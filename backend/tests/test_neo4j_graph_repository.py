@@ -11,6 +11,8 @@ from app.domain.models import (
     CompanyMetadata,
     CompanyResolution,
     EtfHolding,
+    FilingEvidence,
+    FilingEvidenceBatch,
     Portfolio,
     PortfolioPosition,
     SecFiling,
@@ -29,6 +31,7 @@ class FakeDriver:
         self.path_records = []
         self.metadata_target_records = []
         self.filing_target_records = []
+        self.evidence_target_records = []
         self.industry_exposure_records = []
         self.country_exposure_records = []
 
@@ -44,6 +47,8 @@ class FakeDriver:
             return self.metadata_target_records, SimpleNamespace(), []
         if "'sec_filings_synced_at' IN keys(company)" in query:
             return self.filing_target_records, SimpleNamespace(), []
+        if "'evidence_extracted_at' IN keys(filing)" in query:
+            return self.evidence_target_records, SimpleNamespace(), []
         return [], SimpleNamespace(), []
 
     def close(self):
@@ -231,6 +236,62 @@ def test_neo4j_repository_lists_and_writes_company_filings():
     assert "MERGE (company)-[r:FILED]->(filing)" in filing_query
     assert filing_call["filings"][0]["form"] == "10-K"
     assert filing_call["filings"][0]["filing_date"] == "2026-02-25"
+
+
+def test_neo4j_repository_lists_and_writes_filing_evidence():
+    driver = FakeDriver()
+    driver.evidence_target_records = [
+        FakeRecord(
+            accession_number="0001045810-26-000001",
+            cik="0001045810",
+            form="10-K",
+            filing_date="2026-02-25",
+            source_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/nvda-20260125.htm",
+        )
+    ]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused",
+        user="neo4j",
+        password="test",
+        driver=driver,
+    )
+    portfolio_id = uuid4()
+    batch = FilingEvidenceBatch(
+        accession_number="0001045810-26-000001",
+        source_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/nvda-20260125.htm",
+        extraction_method="sec_html_dependency_keywords_v1",
+        evidence=[
+            FilingEvidence(
+                evidence_id="0001045810-26-000001:abc123",
+                accession_number="0001045810-26-000001",
+                evidence_type="dependency_candidate",
+                evidence_text="We depend on third-party suppliers for manufacturing capacity.",
+                matched_terms=["depend on", "suppliers"],
+                source_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/nvda-20260125.htm",
+                source_date=date(2026, 2, 25),
+                extraction_method="sec_html_dependency_keywords_v1",
+            )
+        ],
+    )
+
+    targets = repository.get_filing_evidence_targets(portfolio_id, limit=4)
+    repository.sync_filing_evidence({batch.accession_number: batch})
+
+    assert targets[0].accession_number == "0001045810-26-000001"
+    assert targets[0].filing_date == date(2026, 2, 25)
+    target_query, target_call = driver.calls[0]
+    assert "'evidence_extracted_at' IN keys(filing)" in target_query
+    assert target_call["limit"] == 4
+
+    mark_query, mark_call = driver.calls[1]
+    assert "evidence_extracted_at = datetime()" in mark_query
+    assert mark_call["filings"][0]["evidence_count"] == 1
+
+    evidence_query, evidence_call = driver.calls[2]
+    assert "MERGE (evidence:Evidence {evidence_id: item.evidence_id})" in evidence_query
+    assert "MERGE (filing)-[r:CONTAINS_EVIDENCE]->(evidence)" in evidence_query
+    assert evidence_call["evidence"][0]["matched_terms"] == ["depend on", "suppliers"]
+    assert evidence_call["evidence"][0]["source_date"] == "2026-02-25"
 
 
 def test_neo4j_repository_parses_exposure_paths():

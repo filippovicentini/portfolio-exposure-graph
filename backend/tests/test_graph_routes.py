@@ -13,6 +13,9 @@ from app.domain.models import (
     CompanyMetadataTarget,
     EtfHolding,
     ExposurePath,
+    FilingEvidence,
+    FilingEvidenceBatch,
+    FilingEvidenceTarget,
     SecFiling,
     StructuralExposureItem,
 )
@@ -21,6 +24,7 @@ from app.providers.base import (
     CompanyFilingsProvider,
     CompanyMetadataProvider,
     EtfHoldingsProvider,
+    FilingEvidenceProvider,
 )
 from app.repositories.graph_repository import GraphRepository
 
@@ -83,6 +87,30 @@ class FakeCompanyFilingsProvider(CompanyFilingsProvider):
         )
 
 
+class FakeFilingEvidenceProvider(FilingEvidenceProvider):
+    def extract_evidence(
+        self,
+        filing: FilingEvidenceTarget,
+        limit: int,
+    ) -> FilingEvidenceBatch | None:
+        evidence = FilingEvidence(
+            evidence_id=f"{filing.accession_number}:evidence-1",
+            accession_number=filing.accession_number,
+            evidence_type="dependency_candidate",
+            evidence_text="We depend on suppliers for manufacturing capacity.",
+            matched_terms=["depend on", "suppliers"],
+            source_url=filing.source_url,
+            source_date=filing.filing_date,
+            extraction_method="sec_html_dependency_keywords_v1",
+        )
+        return FilingEvidenceBatch(
+            accession_number=filing.accession_number,
+            source_url=filing.source_url,
+            extraction_method="sec_html_dependency_keywords_v1",
+            evidence=[evidence][:limit],
+        )
+
+
 class FakeGraphRepository(GraphRepository):
     def __init__(self) -> None:
         self.metadata_synced = {}
@@ -109,6 +137,22 @@ class FakeGraphRepository(GraphRepository):
 
     def sync_company_filings(self, company_filings) -> None:
         self.filings_synced = dict(company_filings)
+
+    def get_filing_evidence_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[FilingEvidenceTarget]:
+        return [
+            FilingEvidenceTarget(
+                accession_number="0001045810-26-000001",
+                cik="0001045810",
+                form="10-K",
+                filing_date=date(2026, 2, 25),
+                source_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/nvda-20260125.htm",
+            )
+        ][:limit]
+
+    def sync_filing_evidence(self, evidence_batches) -> None:
+        self.evidence_synced = dict(evidence_batches)
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -160,11 +204,13 @@ def test_graph_sync_and_paths_endpoints(client):
     original_company_provider = graph_service.company_asset_provider
     original_metadata_provider = graph_service.company_metadata_provider
     original_filings_provider = graph_service.company_filings_provider
+    original_evidence_provider = graph_service.filing_evidence_provider
     graph_service.graph_repository = FakeGraphRepository()
     graph_service.etf_holdings_provider = FakeEtfHoldingsProvider()
     graph_service.company_asset_provider = FakeCompanyAssetProvider()
     graph_service.company_metadata_provider = FakeCompanyMetadataProvider()
     graph_service.company_filings_provider = FakeCompanyFilingsProvider()
+    graph_service.filing_evidence_provider = FakeFilingEvidenceProvider()
     try:
         sync_response = client.post(
             f"/api/v1/portfolios/{portfolio_id}/graph/sync"
@@ -174,6 +220,9 @@ def test_graph_sync_and_paths_endpoints(client):
         )
         filings_response = client.post(
             f"/api/v1/portfolios/{portfolio_id}/graph/sec-filings/sync?company_limit=1&filings_per_company=1"
+        )
+        evidence_response = client.post(
+            f"/api/v1/portfolios/{portfolio_id}/graph/filing-evidence/sync?filing_limit=1&evidence_per_filing=1"
         )
         paths_response = client.get(
             f"/api/v1/portfolios/{portfolio_id}/graph/paths"
@@ -187,6 +236,7 @@ def test_graph_sync_and_paths_endpoints(client):
         graph_service.company_asset_provider = original_company_provider
         graph_service.company_metadata_provider = original_metadata_provider
         graph_service.company_filings_provider = original_filings_provider
+        graph_service.filing_evidence_provider = original_evidence_provider
 
     assert sync_response.status_code == 200
     assert sync_response.json()["ownership_edges_synced"] == 2
@@ -209,6 +259,17 @@ def test_graph_sync_and_paths_endpoints(client):
         "companies_synced": 1,
         "filings_synced": 1,
         "unresolved_company_ciks": [],
+    }
+
+    assert evidence_response.status_code == 200
+    assert evidence_response.json() == {
+        "portfolio_id": portfolio_id,
+        "filings_requested": 1,
+        "filings_processed": 1,
+        "filings_with_evidence": 1,
+        "evidence_synced": 1,
+        "filings_without_evidence": [],
+        "unresolved_filing_accessions": [],
     }
 
     assert paths_response.status_code == 200

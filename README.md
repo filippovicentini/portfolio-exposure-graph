@@ -22,11 +22,12 @@ Implemented:
 - `Company -> Industry` and `Company -> Country` structural graph edges
 - portfolio-weight aggregation by SEC primary industry and business-address country
 - bounded SEC 10-K/10-Q filing metadata ingestion into canonical Filing nodes
+- deterministic filing evidence extraction into provenance-preserving Evidence nodes
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
-- sourced supplier/dependency extraction from SEC filings
+- promote reviewed filing evidence into sourced supplier/dependency relationships
 - provenance on document-derived graph edges
 - small frontend
 
@@ -49,7 +50,9 @@ Listed instruments remain `Asset` nodes because the same economic company can be
 
 Company metadata enrichment is a separate bounded step. It reads the SEC submissions JSON for canonical companies and stores the SEC primary SIC classification as `OPERATES_IN` plus the SEC business-address country as `BASED_IN`. These are structural facts, not numeric exposure weights. The endpoint defaults to 25 companies per call so large ETFs do not trigger hundreds of SEC requests in one synchronous request.
 
-SEC filing ingestion is also bounded and currently stores only recent `10-K` and `10-Q` metadata. Each filing is a canonical `Filing` node keyed by SEC accession number and linked from its canonical company with `FILED`. The node keeps the filing date, report date, form, primary-document URL, filing-index URL, and submissions source URL. This increment deliberately does not download filing text or perform AI extraction yet.
+SEC filing ingestion is also bounded and currently stores only recent `10-K` and `10-Q` metadata. Each filing is a canonical `Filing` node keyed by SEC accession number and linked from its canonical company with `FILED`. The node keeps the filing date, report date, form, primary-document URL, filing-index URL, and submissions source URL.
+
+Filing evidence extraction is a separate bounded step. It downloads stored SEC primary-document URLs and records conservative dependency-related excerpts as `Evidence` nodes linked with `CONTAINS_EVIDENCE`. Extraction is deterministic keyword matching (`sec_html_dependency_keywords_v3`), not an AI judgment. An evidence node is only a source excerpt/candidate and does not create or imply a `DEPENDS_ON` relationship.
 
 Structural exposure aggregation reuses only sourced numeric weights already present on `OWNS` and `HOLDS`. An industry bucket therefore means "portfolio/look-through weight whose canonical company has this SEC primary SIC". A country bucket means "portfolio/look-through weight whose canonical company has this SEC business-address country". It is not a revenue-by-country estimate, and no numeric weight is inferred from `OPERATES_IN` or `BASED_IN` themselves. Coverage fields report how much portfolio/look-through weight currently has metadata for each dimension.
 
@@ -93,6 +96,7 @@ GET  /api/v1/portfolios/{portfolio_id}/lookthrough
 POST /api/v1/portfolios/{portfolio_id}/graph/sync
 POST /api/v1/portfolios/{portfolio_id}/graph/company-metadata/sync?limit=25
 POST /api/v1/portfolios/{portfolio_id}/graph/sec-filings/sync?company_limit=5&filings_per_company=4
+POST /api/v1/portfolios/{portfolio_id}/graph/filing-evidence/sync?filing_limit=4&evidence_per_filing=5
 GET  /api/v1/portfolios/{portfolio_id}/graph/paths
 GET  /api/v1/portfolios/{portfolio_id}/graph/structural-exposure
 ```

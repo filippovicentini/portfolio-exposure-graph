@@ -14,6 +14,8 @@ from app.domain.models import (
     CompanyResolution,
     EtfHolding,
     ExposurePath,
+    FilingEvidenceBatch,
+    FilingEvidenceTarget,
     Portfolio,
     StructuralExposureItem,
 )
@@ -196,6 +198,51 @@ class Neo4jGraphRepository(GraphRepository):
         filing.updated_at = datetime()
     MERGE (company)-[r:FILED]->(filing)
     SET r.source_url = item.submissions_url,
+        r.updated_at = datetime()
+    """
+
+    FILING_EVIDENCE_TARGETS_QUERY = """
+    MATCH path =
+      (p:Portfolio {portfolio_id: $portfolio_id})
+      -[:OWNS|HOLDS*1..2]->(asset:Asset)
+      -[:REPRESENTS]->(company:Company)
+      -[:FILED]->(filing:Filing)
+    WHERE NOT ('evidence_extracted_at' IN keys(filing))
+    WITH filing, min(length(path)) AS path_length
+    RETURN filing.accession_number AS accession_number,
+           filing.cik AS cik,
+           filing.form AS form,
+           filing.filing_date AS filing_date,
+           filing.source_url AS source_url
+    ORDER BY path_length ASC, filing.filing_date DESC, filing.accession_number ASC
+    LIMIT $limit
+    """
+
+    MARK_FILINGS_EVIDENCE_EXTRACTED_QUERY = """
+    UNWIND $filings AS item
+    MATCH (filing:Filing {accession_number: item.accession_number})
+    SET filing.evidence_extracted_at = datetime(),
+        filing.evidence_extraction_method = item.extraction_method,
+        filing.evidence_count = item.evidence_count,
+        filing.updated_at = datetime()
+    """
+
+    UPSERT_EVIDENCE_QUERY = """
+    UNWIND $evidence AS item
+    MATCH (filing:Filing {accession_number: item.accession_number})
+    MERGE (evidence:Evidence {evidence_id: item.evidence_id})
+    SET evidence.evidence_type = item.evidence_type,
+        evidence.evidence_text = item.evidence_text,
+        evidence.matched_terms = item.matched_terms,
+        evidence.source_document_id = item.accession_number,
+        evidence.source_url = item.source_url,
+        evidence.source_date = item.source_date,
+        evidence.extraction_method = item.extraction_method,
+        evidence.updated_at = datetime()
+    MERGE (filing)-[r:CONTAINS_EVIDENCE]->(evidence)
+    SET r.source_document_id = item.accession_number,
+        r.source_url = item.source_url,
+        r.extraction_method = item.extraction_method,
         r.updated_at = datetime()
     """
 
@@ -472,6 +519,70 @@ class Neo4jGraphRepository(GraphRepository):
         ]
         paths.sort(key=lambda item: (-item.effective_weight_pct, item.asset_path))
         return paths
+
+    def get_filing_evidence_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[FilingEvidenceTarget]:
+        records, _, _ = self.driver.execute_query(
+            self.FILING_EVIDENCE_TARGETS_QUERY,
+            portfolio_id=str(portfolio_id),
+            limit=limit,
+            database_=self.database,
+        )
+        return [
+            FilingEvidenceTarget(
+                accession_number=str(record["accession_number"]),
+                cik=str(record["cik"]),
+                form=str(record["form"]),
+                filing_date=record["filing_date"],
+                source_url=str(record["source_url"]),
+            )
+            for record in records
+        ]
+
+    def sync_filing_evidence(
+        self,
+        evidence_batches: Mapping[str, FilingEvidenceBatch],
+    ) -> None:
+        if not evidence_batches:
+            return
+
+        filings = [
+            {
+                "accession_number": batch.accession_number,
+                "extraction_method": batch.extraction_method,
+                "evidence_count": len(batch.evidence),
+            }
+            for _, batch in sorted(evidence_batches.items())
+        ]
+        self.driver.execute_query(
+            self.MARK_FILINGS_EVIDENCE_EXTRACTED_QUERY,
+            filings=filings,
+            database_=self.database,
+        )
+
+        evidence = [
+            {
+                "evidence_id": item.evidence_id,
+                "accession_number": item.accession_number,
+                "evidence_type": item.evidence_type,
+                "evidence_text": item.evidence_text,
+                "matched_terms": item.matched_terms,
+                "source_url": item.source_url,
+                "source_date": item.source_date.isoformat(),
+                "extraction_method": item.extraction_method,
+            }
+            for _, batch in sorted(evidence_batches.items())
+            for item in batch.evidence
+        ]
+        if evidence:
+            self.driver.execute_query(
+                self.UPSERT_EVIDENCE_QUERY,
+                evidence=evidence,
+                database_=self.database,
+            )
 
     def get_industry_exposures(
         self,

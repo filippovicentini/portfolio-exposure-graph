@@ -10,6 +10,8 @@ from app.domain.models import (
     CompanyMetadata,
     CompanyMetadataSyncResult,
     CompanyResolution,
+    FilingEvidenceBatch,
+    FilingEvidenceSyncResult,
     GraphSyncResult,
     PortfolioExposurePaths,
     PortfolioStructuralExposure,
@@ -19,6 +21,7 @@ from app.providers.base import (
     CompanyFilingsProvider,
     CompanyMetadataProvider,
     EtfHoldingsProvider,
+    FilingEvidenceProvider,
 )
 from app.repositories.graph_repository import GraphRepository
 from app.repositories.portfolio_repository import PortfolioRepository
@@ -37,6 +40,7 @@ class GraphService:
         company_asset_provider: AssetDataProvider,
         company_metadata_provider: CompanyMetadataProvider,
         company_filings_provider: CompanyFilingsProvider,
+        filing_evidence_provider: FilingEvidenceProvider,
     ) -> None:
         self.portfolio_repository = portfolio_repository
         self.graph_repository = graph_repository
@@ -44,6 +48,7 @@ class GraphService:
         self.company_asset_provider = company_asset_provider
         self.company_metadata_provider = company_metadata_provider
         self.company_filings_provider = company_filings_provider
+        self.filing_evidence_provider = filing_evidence_provider
 
     def sync(self, portfolio_id: UUID) -> GraphSyncResult | None:
         portfolio = self.portfolio_repository.get(portfolio_id)
@@ -210,6 +215,61 @@ class GraphService:
                 len(batch.filings) for batch in filings_by_cik.values()
             ),
             unresolved_company_ciks=sorted(set(unresolved)),
+        )
+
+    def sync_filing_evidence(
+        self,
+        portfolio_id: UUID,
+        filing_limit: int = 4,
+        evidence_per_filing: int = 5,
+    ) -> FilingEvidenceSyncResult | None:
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+
+        targets = self.graph_repository.get_filing_evidence_targets(
+            portfolio_id,
+            limit=filing_limit,
+        )
+        evidence_by_accession: dict[str, FilingEvidenceBatch] = {}
+        unresolved: list[str] = []
+
+        for target in targets:
+            try:
+                batch = self.filing_evidence_provider.extract_evidence(
+                    target,
+                    limit=evidence_per_filing,
+                )
+            except Exception:
+                logger.exception(
+                    "Filing evidence provider failed for accession %s",
+                    target.accession_number,
+                )
+                unresolved.append(target.accession_number)
+                continue
+
+            if batch is None:
+                unresolved.append(target.accession_number)
+                continue
+            evidence_by_accession[target.accession_number] = batch
+
+        self.graph_repository.sync_filing_evidence(evidence_by_accession)
+
+        return FilingEvidenceSyncResult(
+            portfolio_id=portfolio_id,
+            filings_requested=len(targets),
+            filings_processed=len(evidence_by_accession),
+            filings_with_evidence=sum(
+                1 for batch in evidence_by_accession.values() if batch.evidence
+            ),
+            evidence_synced=sum(
+                len(batch.evidence) for batch in evidence_by_accession.values()
+            ),
+            filings_without_evidence=sorted(
+                accession
+                for accession, batch in evidence_by_accession.items()
+                if not batch.evidence
+            ),
+            unresolved_filing_accessions=sorted(set(unresolved)),
         )
 
     def get_paths(self, portfolio_id: UUID) -> PortfolioExposurePaths | None:

@@ -12,6 +12,9 @@ from app.domain.models import (
     CompanyMetadataTarget,
     EtfHolding,
     ExposurePath,
+    FilingEvidence,
+    FilingEvidenceBatch,
+    FilingEvidenceTarget,
     SecFiling,
     StructuralExposureItem,
 )
@@ -20,6 +23,7 @@ from app.providers.base import (
     CompanyFilingsProvider,
     CompanyMetadataProvider,
     EtfHoldingsProvider,
+    FilingEvidenceProvider,
 )
 from app.repositories.graph_repository import GraphRepository
 from app.services.graph_service import GraphService
@@ -131,6 +135,41 @@ class FailingCompanyFilingsProvider(CompanyFilingsProvider):
         raise RuntimeError("filings unavailable")
 
 
+class FakeFilingEvidenceProvider(FilingEvidenceProvider):
+    def extract_evidence(
+        self,
+        filing: FilingEvidenceTarget,
+        limit: int,
+    ) -> FilingEvidenceBatch | None:
+        evidence = [
+            FilingEvidence(
+                evidence_id=f"{filing.accession_number}:evidence-1",
+                accession_number=filing.accession_number,
+                evidence_type="dependency_candidate",
+                evidence_text="We depend on third-party suppliers for critical manufacturing capacity.",
+                matched_terms=["depend on", "suppliers"],
+                source_url=filing.source_url,
+                source_date=filing.filing_date,
+                extraction_method="sec_html_dependency_keywords_v1",
+            )
+        ]
+        return FilingEvidenceBatch(
+            accession_number=filing.accession_number,
+            source_url=filing.source_url,
+            extraction_method="sec_html_dependency_keywords_v1",
+            evidence=evidence[:limit],
+        )
+
+
+class FailingFilingEvidenceProvider(FilingEvidenceProvider):
+    def extract_evidence(
+        self,
+        filing: FilingEvidenceTarget,
+        limit: int,
+    ) -> FilingEvidenceBatch | None:
+        raise RuntimeError("filing text unavailable")
+
+
 class FakeGraphRepository(GraphRepository):
     def __init__(self) -> None:
         self.synced_portfolio = None
@@ -140,6 +179,8 @@ class FakeGraphRepository(GraphRepository):
         self.synced_metadata = None
         self.filing_targets: list[CompanyFilingTarget] = []
         self.synced_filings = None
+        self.evidence_targets: list[FilingEvidenceTarget] = []
+        self.synced_evidence = None
 
     def sync_portfolio(self, portfolio, etf_holdings, company_resolutions) -> None:
         self.synced_portfolio = portfolio
@@ -161,6 +202,14 @@ class FakeGraphRepository(GraphRepository):
 
     def sync_company_filings(self, company_filings) -> None:
         self.synced_filings = dict(company_filings)
+
+    def get_filing_evidence_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[FilingEvidenceTarget]:
+        return self.evidence_targets[:limit]
+
+    def sync_filing_evidence(self, evidence_batches) -> None:
+        self.synced_evidence = dict(evidence_batches)
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -227,6 +276,7 @@ def test_graph_service_syncs_assets_etf_exposure_and_companies(
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
         company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
     )
 
     result = service.sync(portfolio_id)
@@ -264,6 +314,7 @@ def test_graph_service_keeps_graph_sync_available_when_company_provider_fails(
         company_asset_provider=FailingCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
         company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
     )
 
     result = service.sync(portfolio_id)
@@ -290,6 +341,7 @@ def test_graph_service_returns_paths(client, portfolio_repository):
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
         company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
     )
 
     result = service.get_paths(portfolio_id)
@@ -316,6 +368,7 @@ def test_graph_service_returns_structural_exposure_breakdown(
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
         company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
     )
 
     result = service.get_structural_exposure(portfolio_id)
@@ -349,6 +402,7 @@ def test_graph_service_syncs_company_metadata_in_bounded_batches(
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
         company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
     )
 
     result = service.sync_company_metadata(portfolio_id, limit=1)
@@ -381,6 +435,7 @@ def test_graph_service_company_metadata_failures_are_non_blocking(
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FailingCompanyMetadataProvider(),
         company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
     )
 
     result = service.sync_company_metadata(portfolio_id)
@@ -414,6 +469,7 @@ def test_graph_service_syncs_recent_company_filings_in_bounded_batches(
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
         company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
     )
 
     result = service.sync_company_filings(
@@ -450,6 +506,7 @@ def test_graph_service_company_filing_failures_are_non_blocking(
         company_asset_provider=FakeCompanyAssetProvider(),
         company_metadata_provider=FakeCompanyMetadataProvider(),
         company_filings_provider=FailingCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
     )
 
     result = service.sync_company_filings(portfolio_id)
@@ -460,3 +517,93 @@ def test_graph_service_company_filing_failures_are_non_blocking(
     assert result.filings_synced == 0
     assert result.unresolved_company_ciks == ["0001045810"]
     assert graph_repository.synced_filings == {}
+
+
+def test_graph_service_syncs_filing_evidence_in_bounded_batches(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Evidence", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.evidence_targets = [
+        FilingEvidenceTarget(
+            accession_number="0001045810-26-000001",
+            cik="0001045810",
+            form="10-K",
+            filing_date=date(2026, 2, 25),
+            source_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581026000001/nvda-20260125.htm",
+        ),
+        FilingEvidenceTarget(
+            accession_number="0001045810-25-000200",
+            cik="0001045810",
+            form="10-Q",
+            filing_date=date(2025, 11, 19),
+            source_url="https://www.sec.gov/Archives/edgar/data/1045810/000104581025000200/nvda-20251026.htm",
+        ),
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+    )
+
+    result = service.sync_filing_evidence(
+        portfolio_id,
+        filing_limit=1,
+        evidence_per_filing=1,
+    )
+
+    assert result is not None
+    assert result.filings_requested == 1
+    assert result.filings_processed == 1
+    assert result.filings_with_evidence == 1
+    assert result.evidence_synced == 1
+    assert result.filings_without_evidence == []
+    assert result.unresolved_filing_accessions == []
+    assert set(graph_repository.synced_evidence) == {"0001045810-26-000001"}
+
+
+def test_graph_service_filing_evidence_failures_are_non_blocking(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Evidence fallback", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.evidence_targets = [
+        FilingEvidenceTarget(
+            accession_number="0001045810-26-000001",
+            cik="0001045810",
+            form="10-K",
+            filing_date=date(2026, 2, 25),
+            source_url="https://example.com/filing.htm",
+        )
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FailingFilingEvidenceProvider(),
+    )
+
+    result = service.sync_filing_evidence(portfolio_id)
+
+    assert result is not None
+    assert result.filings_requested == 1
+    assert result.filings_processed == 0
+    assert result.filings_with_evidence == 0
+    assert result.evidence_synced == 0
+    assert result.unresolved_filing_accessions == ["0001045810-26-000001"]
+    assert graph_repository.synced_evidence == {}

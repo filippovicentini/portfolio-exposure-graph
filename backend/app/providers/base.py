@@ -7,6 +7,8 @@ from app.domain.models import (
     CompanyFilings,
     CompanyMetadata,
     EtfHolding,
+    FilingEvidenceBatch,
+    FilingEvidenceTarget,
 )
 
 
@@ -43,4 +45,16 @@ class CompanyFilingsProvider(ABC):
         cik: str,
         limit: int,
     ) -> CompanyFilings | None:
+        raise NotImplementedError
+
+
+class FilingEvidenceProvider(ABC):
+    """Extract traceable evidence candidates from a source filing."""
+
+    @abstractmethod
+    def extract_evidence(
+        self,
+        filing: FilingEvidenceTarget,
+        limit: int,
+    ) -> FilingEvidenceBatch | None:
         raise NotImplementedError

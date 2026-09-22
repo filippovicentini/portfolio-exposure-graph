@@ -12,6 +12,8 @@ from app.domain.models import (
     CompanyResolution,
     EtfHolding,
     ExposurePath,
+    FilingEvidenceBatch,
+    FilingEvidenceTarget,
     Portfolio,
     StructuralExposureItem,
 )
@@ -60,6 +62,21 @@ class GraphRepository(ABC):
     def sync_company_filings(
         self,
         company_filings: Mapping[str, CompanyFilings],
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_filing_evidence_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[FilingEvidenceTarget]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def sync_filing_evidence(
+        self,
+        evidence_batches: Mapping[str, FilingEvidenceBatch],
     ) -> None:
         raise NotImplementedError
 

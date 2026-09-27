@@ -10,6 +10,8 @@ from app.domain.models import (
     CompanyMetadata,
     CompanyMetadataTarget,
     CompanyResolution,
+    EvidenceSemanticCandidateBatch,
+    EvidenceSemanticTarget,
     EtfHolding,
     ExposurePath,
     FilingEvidenceBatch,
@@ -77,6 +79,21 @@ class GraphRepository(ABC):
     def sync_filing_evidence(
         self,
         evidence_batches: Mapping[str, FilingEvidenceBatch],
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_evidence_semantic_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[EvidenceSemanticTarget]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def sync_evidence_semantic_candidates(
+        self,
+        candidate_batches: Mapping[str, EvidenceSemanticCandidateBatch],
     ) -> None:
         raise NotImplementedError
 

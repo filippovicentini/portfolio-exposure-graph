@@ -4,17 +4,25 @@ from datetime import date
 from types import SimpleNamespace
 from uuid import uuid4
 
-from app.domain.enums import AssetStatus, AssetType, PortfolioStatus
+from app.domain.enums import (
+    AssetStatus,
+    AssetType,
+    CandidateRelationType,
+    CandidateRole,
+    PortfolioStatus,
+)
 from app.domain.models import (
     AssetResolution,
     CompanyFilings,
     CompanyMetadata,
     CompanyResolution,
+    EvidenceSemanticCandidateBatch,
     EtfHolding,
     FilingEvidence,
     FilingEvidenceBatch,
     Portfolio,
     PortfolioPosition,
+    RelationshipCandidate,
     SecFiling,
 )
 from app.repositories.neo4j_graph_repository import Neo4jGraphRepository
@@ -32,6 +40,7 @@ class FakeDriver:
         self.metadata_target_records = []
         self.filing_target_records = []
         self.evidence_target_records = []
+        self.semantic_target_records = []
         self.industry_exposure_records = []
         self.country_exposure_records = []
 
@@ -49,6 +58,8 @@ class FakeDriver:
             return self.filing_target_records, SimpleNamespace(), []
         if "'evidence_extracted_at' IN keys(filing)" in query:
             return self.evidence_target_records, SimpleNamespace(), []
+        if "'semantic_candidates_extracted_at' IN keys(evidence)" in query:
+            return self.semantic_target_records, SimpleNamespace(), []
         return [], SimpleNamespace(), []
 
     def close(self):
@@ -292,6 +303,70 @@ def test_neo4j_repository_lists_and_writes_filing_evidence():
     assert "MERGE (filing)-[r:CONTAINS_EVIDENCE]->(evidence)" in evidence_query
     assert evidence_call["evidence"][0]["matched_terms"] == ["depend on", "suppliers"]
     assert evidence_call["evidence"][0]["source_date"] == "2026-02-25"
+
+
+def test_neo4j_repository_lists_and_writes_evidence_semantic_candidates():
+    driver = FakeDriver()
+    driver.semantic_target_records = [
+        FakeRecord(
+            evidence_id="0001045810-26-000001:abc123",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            accession_number="0001045810-26-000001",
+            evidence_text="We utilize foundries, such as Taiwan Semiconductor Manufacturing Company Limited.",
+            source_url="https://example.com/filing.htm",
+            source_date="2026-02-25",
+        )
+    ]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused",
+        user="neo4j",
+        password="test",
+        driver=driver,
+    )
+    portfolio_id = uuid4()
+    batch = EvidenceSemanticCandidateBatch(
+        evidence_id="0001045810-26-000001:abc123",
+        extraction_method="fake_semantic_v1",
+        model_name="fake-model",
+        candidates=[
+            RelationshipCandidate(
+                candidate_id="0001045810-26-000001:abc123:tsmc",
+                evidence_id="0001045810-26-000001:abc123",
+                subject_cik="0001045810",
+                subject_name="NVIDIA CORP",
+                object_mention="Taiwan Semiconductor Manufacturing Company Limited",
+                proposed_relation=CandidateRelationType.DEPENDS_ON,
+                role=CandidateRole.FOUNDRY,
+                supporting_text="We utilize foundries, such as Taiwan Semiconductor Manufacturing Company Limited.",
+                extraction_method="fake_semantic_v1",
+                model_name="fake-model",
+            )
+        ],
+    )
+
+    targets = repository.get_evidence_semantic_targets(portfolio_id, limit=10)
+    repository.sync_evidence_semantic_candidates({batch.evidence_id: batch})
+
+    assert targets[0].evidence_id == "0001045810-26-000001:abc123"
+    assert targets[0].subject_name == "NVIDIA CORP"
+    assert targets[0].source_date == date(2026, 2, 25)
+
+    target_query, target_call = driver.calls[0]
+    assert "'semantic_candidates_extracted_at' IN keys(evidence)" in target_query
+    assert "evidence.evidence_type = 'dependency_candidate'" in target_query
+    assert target_call["limit"] == 10
+
+    mark_query, mark_call = driver.calls[1]
+    assert "semantic_candidates_extracted_at = datetime()" in mark_query
+    assert mark_call["evidence"][0]["candidate_count"] == 1
+    assert mark_call["evidence"][0]["model_name"] == "fake-model"
+
+    candidate_query, candidate_call = driver.calls[2]
+    assert "MERGE (candidate:RelationshipCandidate" in candidate_query
+    assert "MERGE (evidence)-[r:SUPPORTS_CANDIDATE]->(candidate)" in candidate_query
+    assert candidate_call["candidates"][0]["proposed_relation"] == "DEPENDS_ON"
+    assert candidate_call["candidates"][0]["role"] == "foundry"
 
 
 def test_neo4j_repository_parses_exposure_paths():

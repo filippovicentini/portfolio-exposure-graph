@@ -5,7 +5,13 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.domain.enums import AssetStatus, AssetType, PortfolioStatus
+from app.domain.enums import (
+    AssetStatus,
+    AssetType,
+    CandidateRelationType,
+    CandidateRole,
+    PortfolioStatus,
+)
 
 
 class PositionInput(BaseModel):
@@ -213,6 +219,46 @@ class FilingEvidenceSyncResult(BaseModel):
     evidence_synced: int = Field(ge=0)
     filings_without_evidence: list[str] = Field(default_factory=list)
     unresolved_filing_accessions: list[str] = Field(default_factory=list)
+
+
+class EvidenceSemanticTarget(BaseModel):
+    evidence_id: str = Field(min_length=1)
+    subject_cik: str = Field(min_length=1, max_length=10)
+    subject_name: str = Field(min_length=1)
+    accession_number: str = Field(min_length=1)
+    evidence_text: str = Field(min_length=1)
+    source_url: str = Field(min_length=1)
+    source_date: date
+
+
+class RelationshipCandidate(BaseModel):
+    candidate_id: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    subject_cik: str = Field(min_length=1, max_length=10)
+    subject_name: str = Field(min_length=1)
+    object_mention: str = Field(min_length=1)
+    proposed_relation: CandidateRelationType = CandidateRelationType.DEPENDS_ON
+    role: CandidateRole
+    supporting_text: str = Field(min_length=1)
+    extraction_method: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+
+
+class EvidenceSemanticCandidateBatch(BaseModel):
+    evidence_id: str = Field(min_length=1)
+    extraction_method: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+    candidates: list[RelationshipCandidate] = Field(default_factory=list)
+
+
+class EvidenceSemanticCandidatesSyncResult(BaseModel):
+    portfolio_id: UUID
+    evidence_requested: int = Field(ge=0)
+    evidence_processed: int = Field(ge=0)
+    evidence_with_candidates: int = Field(ge=0)
+    candidates_synced: int = Field(ge=0)
+    evidence_without_candidates: list[str] = Field(default_factory=list)
+    unresolved_evidence_ids: list[str] = Field(default_factory=list)
 
 
 class StructuralExposureItem(BaseModel):

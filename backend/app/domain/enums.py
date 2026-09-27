@@ -29,6 +29,7 @@ class NodeType(str, Enum):
     SUPPLIER = "supplier"
     FILING = "filing"
     EVIDENCE = "evidence"
+    RELATIONSHIP_CANDIDATE = "relationship_candidate"
     THEME = "theme"
 
 
@@ -41,4 +42,19 @@ class RelationType(str, Enum):
     DEPENDS_ON = "DEPENDS_ON"
     FILED = "FILED"
     CONTAINS_EVIDENCE = "CONTAINS_EVIDENCE"
+    SUPPORTS_CANDIDATE = "SUPPORTS_CANDIDATE"
     EXPOSED_TO = "EXPOSED_TO"
+
+
+class CandidateRelationType(str, Enum):
+    DEPENDS_ON = "DEPENDS_ON"
+
+
+class CandidateRole(str, Enum):
+    FOUNDRY = "foundry"
+    MEMORY_SUPPLIER = "memory_supplier"
+    CONTRACT_MANUFACTURER = "contract_manufacturer"
+    MANUFACTURING_PARTNER = "manufacturing_partner"
+    COMPONENT_SUPPLIER = "component_supplier"
+    SUPPLIER = "supplier"
+    OTHER = "other"

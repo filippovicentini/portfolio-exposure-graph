@@ -6,6 +6,7 @@ from app.dependencies import graph_service, lookthrough_service, portfolio_servi
 from app.domain.models import (
     CompanyFilingsSyncResult,
     CompanyMetadataSyncResult,
+    EvidenceSemanticCandidatesSyncResult,
     FilingEvidenceSyncResult,
     GraphSyncResult,
     Portfolio,
@@ -93,6 +94,25 @@ def sync_portfolio_filing_evidence(
         portfolio_id,
         filing_limit=filing_limit,
         evidence_per_filing=evidence_per_filing,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/evidence-semantic-candidates/sync",
+    response_model=EvidenceSemanticCandidatesSyncResult,
+)
+def sync_portfolio_evidence_semantic_candidates(
+    portfolio_id: UUID,
+    evidence_limit: int = Query(default=10, ge=1, le=20),
+    candidates_per_evidence: int = Query(default=5, ge=1, le=10),
+) -> EvidenceSemanticCandidatesSyncResult:
+    result = graph_service.sync_evidence_semantic_candidates(
+        portfolio_id,
+        evidence_limit=evidence_limit,
+        candidates_per_evidence=candidates_per_evidence,
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")

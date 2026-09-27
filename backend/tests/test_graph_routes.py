@@ -4,18 +4,21 @@ from datetime import date
 from uuid import UUID
 
 from app.dependencies import graph_service
-from app.domain.enums import AssetStatus, AssetType
+from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, CandidateRole
 from app.domain.models import (
     AssetResolution,
     CompanyFilingTarget,
     CompanyFilings,
     CompanyMetadata,
     CompanyMetadataTarget,
+    EvidenceSemanticCandidateBatch,
+    EvidenceSemanticTarget,
     EtfHolding,
     ExposurePath,
     FilingEvidence,
     FilingEvidenceBatch,
     FilingEvidenceTarget,
+    RelationshipCandidate,
     SecFiling,
     StructuralExposureItem,
 )
@@ -23,6 +26,7 @@ from app.providers.base import (
     AssetDataProvider,
     CompanyFilingsProvider,
     CompanyMetadataProvider,
+    EvidenceSemanticCandidateProvider,
     EtfHoldingsProvider,
     FilingEvidenceProvider,
 )
@@ -111,6 +115,32 @@ class FakeFilingEvidenceProvider(FilingEvidenceProvider):
         )
 
 
+class FakeEvidenceSemanticCandidateProvider(EvidenceSemanticCandidateProvider):
+    def extract_candidates(
+        self,
+        evidence: EvidenceSemanticTarget,
+        limit: int,
+    ) -> EvidenceSemanticCandidateBatch | None:
+        candidate = RelationshipCandidate(
+            candidate_id=f"{evidence.evidence_id}:tsmc",
+            evidence_id=evidence.evidence_id,
+            subject_cik=evidence.subject_cik,
+            subject_name=evidence.subject_name,
+            object_mention="TSMC",
+            proposed_relation=CandidateRelationType.DEPENDS_ON,
+            role=CandidateRole.FOUNDRY,
+            supporting_text=evidence.evidence_text,
+            extraction_method="fake_semantic_v1",
+            model_name="fake-model",
+        )
+        return EvidenceSemanticCandidateBatch(
+            evidence_id=evidence.evidence_id,
+            extraction_method="fake_semantic_v1",
+            model_name="fake-model",
+            candidates=[candidate][:limit],
+        )
+
+
 class FakeGraphRepository(GraphRepository):
     def __init__(self) -> None:
         self.metadata_synced = {}
@@ -153,6 +183,24 @@ class FakeGraphRepository(GraphRepository):
 
     def sync_filing_evidence(self, evidence_batches) -> None:
         self.evidence_synced = dict(evidence_batches)
+
+    def get_evidence_semantic_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[EvidenceSemanticTarget]:
+        return [
+            EvidenceSemanticTarget(
+                evidence_id="evidence-1",
+                subject_cik="0001045810",
+                subject_name="NVIDIA CORP",
+                accession_number="0001045810-26-000001",
+                evidence_text="We utilize foundries, such as TSMC.",
+                source_url="https://example.com/filing.htm",
+                source_date=date(2026, 2, 25),
+            )
+        ][:limit]
+
+    def sync_evidence_semantic_candidates(self, candidate_batches) -> None:
+        self.semantic_candidates_synced = dict(candidate_batches)
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -205,12 +253,14 @@ def test_graph_sync_and_paths_endpoints(client):
     original_metadata_provider = graph_service.company_metadata_provider
     original_filings_provider = graph_service.company_filings_provider
     original_evidence_provider = graph_service.filing_evidence_provider
+    original_semantic_provider = graph_service.semantic_candidate_provider
     graph_service.graph_repository = FakeGraphRepository()
     graph_service.etf_holdings_provider = FakeEtfHoldingsProvider()
     graph_service.company_asset_provider = FakeCompanyAssetProvider()
     graph_service.company_metadata_provider = FakeCompanyMetadataProvider()
     graph_service.company_filings_provider = FakeCompanyFilingsProvider()
     graph_service.filing_evidence_provider = FakeFilingEvidenceProvider()
+    graph_service.semantic_candidate_provider = FakeEvidenceSemanticCandidateProvider()
     try:
         sync_response = client.post(
             f"/api/v1/portfolios/{portfolio_id}/graph/sync"
@@ -223,6 +273,9 @@ def test_graph_sync_and_paths_endpoints(client):
         )
         evidence_response = client.post(
             f"/api/v1/portfolios/{portfolio_id}/graph/filing-evidence/sync?filing_limit=1&evidence_per_filing=1"
+        )
+        semantic_response = client.post(
+            f"/api/v1/portfolios/{portfolio_id}/graph/evidence-semantic-candidates/sync?evidence_limit=1&candidates_per_evidence=1"
         )
         paths_response = client.get(
             f"/api/v1/portfolios/{portfolio_id}/graph/paths"
@@ -237,6 +290,7 @@ def test_graph_sync_and_paths_endpoints(client):
         graph_service.company_metadata_provider = original_metadata_provider
         graph_service.company_filings_provider = original_filings_provider
         graph_service.filing_evidence_provider = original_evidence_provider
+        graph_service.semantic_candidate_provider = original_semantic_provider
 
     assert sync_response.status_code == 200
     assert sync_response.json()["ownership_edges_synced"] == 2
@@ -270,6 +324,17 @@ def test_graph_sync_and_paths_endpoints(client):
         "evidence_synced": 1,
         "filings_without_evidence": [],
         "unresolved_filing_accessions": [],
+    }
+
+    assert semantic_response.status_code == 200
+    assert semantic_response.json() == {
+        "portfolio_id": portfolio_id,
+        "evidence_requested": 1,
+        "evidence_processed": 1,
+        "evidence_with_candidates": 1,
+        "candidates_synced": 1,
+        "evidence_without_candidates": [],
+        "unresolved_evidence_ids": [],
     }
 
     assert paths_response.status_code == 200

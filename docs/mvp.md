@@ -10,7 +10,7 @@
 6. Build a shared company knowledge graph with SEC-backed company identity, primary industry, and business-address country metadata.
 7. Ingest recent SEC 10-K/10-Q filing metadata as canonical source-document nodes.
 8. Extract traceable dependency-candidate evidence from SEC filing text without promoting it to graph facts.
-9. Represent structured relationship candidates separately from trusted graph relationships, preserving their source Evidence.
+9. Represent structured relationship candidates separately from trusted graph relationships, preserving their source Evidence, with optional local Ollama extraction.
 10. Store evidence/provenance for document-derived edges.
 11. Return exposure paths explaining why a portfolio is connected to an entity.
 12. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.

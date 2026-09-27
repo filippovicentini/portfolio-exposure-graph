@@ -24,11 +24,11 @@ Implemented:
 - bounded SEC 10-K/10-Q filing metadata ingestion into canonical Filing nodes
 - deterministic filing evidence extraction into provenance-preserving Evidence nodes
 - semantic relationship-candidate graph plumbing from Evidence, with provider abstraction and no automatic dependency promotion
+- optional local Ollama semantic extraction with structured JSON output and deterministic post-validation
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
-- implement an LLM-backed semantic candidate provider with strict structured output and deterministic post-validation
 - resolve candidate object mentions to canonical companies/suppliers
 - promote validated candidates into sourced supplier/dependency relationships
 - small frontend
@@ -56,7 +56,7 @@ SEC filing ingestion is also bounded and currently stores only recent `10-K` and
 
 Filing evidence extraction is a separate bounded step. It downloads stored SEC primary-document URLs and records conservative dependency-related excerpts as `Evidence` nodes linked with `CONTAINS_EVIDENCE`. Extraction is deterministic keyword matching (`sec_html_dependency_keywords_v3`), not an AI judgment. An evidence node is only a source excerpt/candidate and does not create or imply a `DEPENDS_ON` relationship.
 
-The next graph layer stores structured `RelationshipCandidate` nodes linked from source evidence with `SUPPORTS_CANDIDATE`. The provider boundary is implemented, but no production semantic/LLM provider is wired yet. Until one is configured, semantic-candidate targets remain unresolved and are not marked as processed. A candidate is not a trusted graph fact and does not create `DEPENDS_ON`.
+The next graph layer stores structured `RelationshipCandidate` nodes linked from source evidence with `SUPPORTS_CANDIDATE`. An optional local Ollama provider can populate these candidates from Evidence using constrained JSON output plus deterministic validation of verbatim mentions and supporting text. If no semantic provider is configured, targets remain unresolved and are not marked as processed. A candidate is not a trusted graph fact and does not create `DEPENDS_ON`.
 
 Structural exposure aggregation reuses only sourced numeric weights already present on `OWNS` and `HOLDS`. An industry bucket therefore means "portfolio/look-through weight whose canonical company has this SEC primary SIC". A country bucket means "portfolio/look-through weight whose canonical company has this SEC business-address country". It is not a revenue-by-country estimate, and no numeric weight is inferred from `OPERATES_IN` or `BASED_IN` themselves. Coverage fields report how much portfolio/look-through weight currently has metadata for each dimension.
 
@@ -77,6 +77,16 @@ export NEO4J_USER="neo4j"
 export NEO4J_PASSWORD="portfolioexposure"
 export NEO4J_DATABASE="neo4j"
 ```
+
+Semantic extraction is optional. To use a local Ollama model:
+
+```bash
+export SEMANTIC_PROVIDER="ollama"
+export OLLAMA_BASE_URL="http://localhost:11434"
+export OLLAMA_MODEL="qwen3:4b-instruct"
+```
+
+With `SEMANTIC_PROVIDER` unset, the rest of the application still works and semantic-candidate Evidence remains available for later processing. Ollama is contacted only when the semantic-candidate sync endpoint is called.
 
 ## Run locally
 
@@ -113,6 +123,6 @@ cd backend
 python -m pytest
 ```
 
-Provider tests use mocks. The normal test suite does not require SEC, Alpha Vantage, or a running Neo4j instance.
+Provider tests use mocks. The normal test suite does not require SEC, Alpha Vantage, Ollama, or a running Neo4j instance.
 
 See [`docs/graph-schema.md`](docs/graph-schema.md) and [`docs/mvp.md`](docs/mvp.md).

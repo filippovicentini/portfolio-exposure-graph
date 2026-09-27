@@ -1,5 +1,8 @@
 from app.core.config import settings
 from app.providers.alpha_vantage_etf_provider import AlphaVantageEtfProvider
+from app.providers.ollama_semantic_candidate_provider import (
+    OllamaSemanticCandidateProvider,
+)
 from app.providers.sec_asset_provider import SecAssetProvider
 from app.providers.sec_company_metadata_provider import SecCompanyMetadataProvider
 from app.providers.sec_filing_evidence_provider import SecFilingEvidenceProvider
@@ -24,6 +27,14 @@ sec_filings_provider = SecFilingsProvider(user_agent=settings.sec_user_agent)
 sec_filing_evidence_provider = SecFilingEvidenceProvider(user_agent=settings.sec_user_agent)
 alpha_vantage_etf_provider = AlphaVantageEtfProvider(
     api_key=settings.alpha_vantage_api_key
+)
+semantic_candidate_provider = (
+    OllamaSemanticCandidateProvider(
+        base_url=settings.ollama_base_url,
+        model_name=settings.ollama_model,
+    )
+    if settings.semantic_provider == "ollama"
+    else None
 )
 graph_repository = Neo4jGraphRepository(
     uri=settings.neo4j_uri,
@@ -53,4 +64,5 @@ graph_service = GraphService(
     company_metadata_provider=sec_company_metadata_provider,
     company_filings_provider=sec_filings_provider,
     filing_evidence_provider=sec_filing_evidence_provider,
+    semantic_candidate_provider=semantic_candidate_provider,
 )

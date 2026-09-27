@@ -6,6 +6,8 @@ from app.domain.models import (
     AssetResolution,
     CompanyFilings,
     CompanyMetadata,
+    EvidenceSemanticCandidateBatch,
+    EvidenceSemanticTarget,
     EtfHolding,
     FilingEvidenceBatch,
     FilingEvidenceTarget,
@@ -57,4 +59,16 @@ class FilingEvidenceProvider(ABC):
         filing: FilingEvidenceTarget,
         limit: int,
     ) -> FilingEvidenceBatch | None:
+        raise NotImplementedError
+
+
+class EvidenceSemanticCandidateProvider(ABC):
+    """Extract structured relationship candidates from traceable evidence."""
+
+    @abstractmethod
+    def extract_candidates(
+        self,
+        evidence: EvidenceSemanticTarget,
+        limit: int,
+    ) -> EvidenceSemanticCandidateBatch | None:
         raise NotImplementedError

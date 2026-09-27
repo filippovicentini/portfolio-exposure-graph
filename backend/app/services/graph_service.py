@@ -10,6 +10,8 @@ from app.domain.models import (
     CompanyMetadata,
     CompanyMetadataSyncResult,
     CompanyResolution,
+    EvidenceSemanticCandidateBatch,
+    EvidenceSemanticCandidatesSyncResult,
     FilingEvidenceBatch,
     FilingEvidenceSyncResult,
     GraphSyncResult,
@@ -20,6 +22,7 @@ from app.providers.base import (
     AssetDataProvider,
     CompanyFilingsProvider,
     CompanyMetadataProvider,
+    EvidenceSemanticCandidateProvider,
     EtfHoldingsProvider,
     FilingEvidenceProvider,
 )
@@ -41,6 +44,7 @@ class GraphService:
         company_metadata_provider: CompanyMetadataProvider,
         company_filings_provider: CompanyFilingsProvider,
         filing_evidence_provider: FilingEvidenceProvider,
+        semantic_candidate_provider: EvidenceSemanticCandidateProvider | None = None,
     ) -> None:
         self.portfolio_repository = portfolio_repository
         self.graph_repository = graph_repository
@@ -49,6 +53,7 @@ class GraphService:
         self.company_metadata_provider = company_metadata_provider
         self.company_filings_provider = company_filings_provider
         self.filing_evidence_provider = filing_evidence_provider
+        self.semantic_candidate_provider = semantic_candidate_provider
 
     def sync(self, portfolio_id: UUID) -> GraphSyncResult | None:
         portfolio = self.portfolio_repository.get(portfolio_id)
@@ -270,6 +275,64 @@ class GraphService:
                 if not batch.evidence
             ),
             unresolved_filing_accessions=sorted(set(unresolved)),
+        )
+
+    def sync_evidence_semantic_candidates(
+        self,
+        portfolio_id: UUID,
+        evidence_limit: int = 10,
+        candidates_per_evidence: int = 5,
+    ) -> EvidenceSemanticCandidatesSyncResult | None:
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+
+        targets = self.graph_repository.get_evidence_semantic_targets(
+            portfolio_id,
+            limit=evidence_limit,
+        )
+        candidate_batches: dict[str, EvidenceSemanticCandidateBatch] = {}
+        unresolved: list[str] = []
+
+        if self.semantic_candidate_provider is None:
+            unresolved.extend(target.evidence_id for target in targets)
+        else:
+            for target in targets:
+                try:
+                    batch = self.semantic_candidate_provider.extract_candidates(
+                        target,
+                        limit=candidates_per_evidence,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Semantic candidate provider failed for evidence %s",
+                        target.evidence_id,
+                    )
+                    unresolved.append(target.evidence_id)
+                    continue
+
+                if batch is None:
+                    unresolved.append(target.evidence_id)
+                    continue
+                candidate_batches[target.evidence_id] = batch
+
+        self.graph_repository.sync_evidence_semantic_candidates(candidate_batches)
+
+        return EvidenceSemanticCandidatesSyncResult(
+            portfolio_id=portfolio_id,
+            evidence_requested=len(targets),
+            evidence_processed=len(candidate_batches),
+            evidence_with_candidates=sum(
+                1 for batch in candidate_batches.values() if batch.candidates
+            ),
+            candidates_synced=sum(
+                len(batch.candidates) for batch in candidate_batches.values()
+            ),
+            evidence_without_candidates=sorted(
+                evidence_id
+                for evidence_id, batch in candidate_batches.items()
+                if not batch.candidates
+            ),
+            unresolved_evidence_ids=sorted(set(unresolved)),
         )
 
     def get_paths(self, portfolio_id: UUID) -> PortfolioExposurePaths | None:

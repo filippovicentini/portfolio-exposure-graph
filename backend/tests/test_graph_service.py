@@ -3,18 +3,21 @@ from __future__ import annotations
 from datetime import date
 from uuid import UUID
 
-from app.domain.enums import AssetStatus, AssetType
+from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, CandidateRole
 from app.domain.models import (
     AssetResolution,
     CompanyFilingTarget,
     CompanyFilings,
     CompanyMetadata,
     CompanyMetadataTarget,
+    EvidenceSemanticCandidateBatch,
+    EvidenceSemanticTarget,
     EtfHolding,
     ExposurePath,
     FilingEvidence,
     FilingEvidenceBatch,
     FilingEvidenceTarget,
+    RelationshipCandidate,
     SecFiling,
     StructuralExposureItem,
 )
@@ -22,6 +25,7 @@ from app.providers.base import (
     AssetDataProvider,
     CompanyFilingsProvider,
     CompanyMetadataProvider,
+    EvidenceSemanticCandidateProvider,
     EtfHoldingsProvider,
     FilingEvidenceProvider,
 )
@@ -170,6 +174,43 @@ class FailingFilingEvidenceProvider(FilingEvidenceProvider):
         raise RuntimeError("filing text unavailable")
 
 
+class FakeEvidenceSemanticCandidateProvider(EvidenceSemanticCandidateProvider):
+    def extract_candidates(
+        self,
+        evidence: EvidenceSemanticTarget,
+        limit: int,
+    ) -> EvidenceSemanticCandidateBatch | None:
+        candidates = [
+            RelationshipCandidate(
+                candidate_id=f"{evidence.evidence_id}:tsmc",
+                evidence_id=evidence.evidence_id,
+                subject_cik=evidence.subject_cik,
+                subject_name=evidence.subject_name,
+                object_mention="Taiwan Semiconductor Manufacturing Company Limited",
+                proposed_relation=CandidateRelationType.DEPENDS_ON,
+                role=CandidateRole.FOUNDRY,
+                supporting_text=evidence.evidence_text,
+                extraction_method="fake_semantic_v1",
+                model_name="fake-model",
+            )
+        ]
+        return EvidenceSemanticCandidateBatch(
+            evidence_id=evidence.evidence_id,
+            extraction_method="fake_semantic_v1",
+            model_name="fake-model",
+            candidates=candidates[:limit],
+        )
+
+
+class FailingEvidenceSemanticCandidateProvider(EvidenceSemanticCandidateProvider):
+    def extract_candidates(
+        self,
+        evidence: EvidenceSemanticTarget,
+        limit: int,
+    ) -> EvidenceSemanticCandidateBatch | None:
+        raise RuntimeError("semantic provider unavailable")
+
+
 class FakeGraphRepository(GraphRepository):
     def __init__(self) -> None:
         self.synced_portfolio = None
@@ -181,6 +222,8 @@ class FakeGraphRepository(GraphRepository):
         self.synced_filings = None
         self.evidence_targets: list[FilingEvidenceTarget] = []
         self.synced_evidence = None
+        self.semantic_targets: list[EvidenceSemanticTarget] = []
+        self.synced_semantic_candidates = None
 
     def sync_portfolio(self, portfolio, etf_holdings, company_resolutions) -> None:
         self.synced_portfolio = portfolio
@@ -210,6 +253,14 @@ class FakeGraphRepository(GraphRepository):
 
     def sync_filing_evidence(self, evidence_batches) -> None:
         self.synced_evidence = dict(evidence_batches)
+
+    def get_evidence_semantic_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[EvidenceSemanticTarget]:
+        return self.semantic_targets[:limit]
+
+    def sync_evidence_semantic_candidates(self, candidate_batches) -> None:
+        self.synced_semantic_candidates = dict(candidate_batches)
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -607,3 +658,140 @@ def test_graph_service_filing_evidence_failures_are_non_blocking(
     assert result.evidence_synced == 0
     assert result.unresolved_filing_accessions == ["0001045810-26-000001"]
     assert graph_repository.synced_evidence == {}
+
+
+def test_graph_service_syncs_evidence_semantic_candidates_in_bounded_batches(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Semantic", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.semantic_targets = [
+        EvidenceSemanticTarget(
+            evidence_id="evidence-1",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            accession_number="0001045810-26-000001",
+            evidence_text="We utilize foundries, such as Taiwan Semiconductor Manufacturing Company Limited.",
+            source_url="https://example.com/filing.htm",
+            source_date=date(2026, 2, 25),
+        ),
+        EvidenceSemanticTarget(
+            evidence_id="evidence-2",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            accession_number="0001045810-26-000001",
+            evidence_text="We purchase memory from SK Hynix.",
+            source_url="https://example.com/filing.htm",
+            source_date=date(2026, 2, 25),
+        ),
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+        semantic_candidate_provider=FakeEvidenceSemanticCandidateProvider(),
+    )
+
+    result = service.sync_evidence_semantic_candidates(
+        portfolio_id,
+        evidence_limit=1,
+        candidates_per_evidence=1,
+    )
+
+    assert result is not None
+    assert result.evidence_requested == 1
+    assert result.evidence_processed == 1
+    assert result.evidence_with_candidates == 1
+    assert result.candidates_synced == 1
+    assert result.evidence_without_candidates == []
+    assert result.unresolved_evidence_ids == []
+    assert set(graph_repository.synced_semantic_candidates) == {"evidence-1"}
+
+
+def test_graph_service_semantic_candidate_failures_are_non_blocking(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Semantic fallback", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.semantic_targets = [
+        EvidenceSemanticTarget(
+            evidence_id="evidence-1",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            accession_number="0001045810-26-000001",
+            evidence_text="We utilize foundries, such as TSMC.",
+            source_url="https://example.com/filing.htm",
+            source_date=date(2026, 2, 25),
+        )
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+        semantic_candidate_provider=FailingEvidenceSemanticCandidateProvider(),
+    )
+
+    result = service.sync_evidence_semantic_candidates(portfolio_id)
+
+    assert result is not None
+    assert result.evidence_requested == 1
+    assert result.evidence_processed == 0
+    assert result.evidence_with_candidates == 0
+    assert result.candidates_synced == 0
+    assert result.unresolved_evidence_ids == ["evidence-1"]
+    assert graph_repository.synced_semantic_candidates == {}
+
+
+def test_graph_service_without_semantic_provider_leaves_evidence_unprocessed(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Semantic disabled", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.semantic_targets = [
+        EvidenceSemanticTarget(
+            evidence_id="evidence-1",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            accession_number="0001045810-26-000001",
+            evidence_text="We utilize foundries, such as TSMC.",
+            source_url="https://example.com/filing.htm",
+            source_date=date(2026, 2, 25),
+        )
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+    )
+
+    result = service.sync_evidence_semantic_candidates(portfolio_id)
+
+    assert result is not None
+    assert result.evidence_requested == 1
+    assert result.evidence_processed == 0
+    assert result.unresolved_evidence_ids == ["evidence-1"]
+    assert graph_repository.synced_semantic_candidates == {}

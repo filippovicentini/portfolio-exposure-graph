@@ -23,12 +23,14 @@ Implemented:
 - portfolio-weight aggregation by SEC primary industry and business-address country
 - bounded SEC 10-K/10-Q filing metadata ingestion into canonical Filing nodes
 - deterministic filing evidence extraction into provenance-preserving Evidence nodes
+- semantic relationship-candidate graph plumbing from Evidence, with provider abstraction and no automatic dependency promotion
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
-- promote reviewed filing evidence into sourced supplier/dependency relationships
-- provenance on document-derived graph edges
+- implement an LLM-backed semantic candidate provider with strict structured output and deterministic post-validation
+- resolve candidate object mentions to canonical companies/suppliers
+- promote validated candidates into sourced supplier/dependency relationships
 - small frontend
 
 Out of scope for the MVP: price prediction, trading recommendations, portfolio optimization, broker integration, and real-time market data.
@@ -53,6 +55,8 @@ Company metadata enrichment is a separate bounded step. It reads the SEC submiss
 SEC filing ingestion is also bounded and currently stores only recent `10-K` and `10-Q` metadata. Each filing is a canonical `Filing` node keyed by SEC accession number and linked from its canonical company with `FILED`. The node keeps the filing date, report date, form, primary-document URL, filing-index URL, and submissions source URL.
 
 Filing evidence extraction is a separate bounded step. It downloads stored SEC primary-document URLs and records conservative dependency-related excerpts as `Evidence` nodes linked with `CONTAINS_EVIDENCE`. Extraction is deterministic keyword matching (`sec_html_dependency_keywords_v3`), not an AI judgment. An evidence node is only a source excerpt/candidate and does not create or imply a `DEPENDS_ON` relationship.
+
+The next graph layer stores structured `RelationshipCandidate` nodes linked from source evidence with `SUPPORTS_CANDIDATE`. The provider boundary is implemented, but no production semantic/LLM provider is wired yet. Until one is configured, semantic-candidate targets remain unresolved and are not marked as processed. A candidate is not a trusted graph fact and does not create `DEPENDS_ON`.
 
 Structural exposure aggregation reuses only sourced numeric weights already present on `OWNS` and `HOLDS`. An industry bucket therefore means "portfolio/look-through weight whose canonical company has this SEC primary SIC". A country bucket means "portfolio/look-through weight whose canonical company has this SEC business-address country". It is not a revenue-by-country estimate, and no numeric weight is inferred from `OPERATES_IN` or `BASED_IN` themselves. Coverage fields report how much portfolio/look-through weight currently has metadata for each dimension.
 
@@ -97,6 +101,7 @@ POST /api/v1/portfolios/{portfolio_id}/graph/sync
 POST /api/v1/portfolios/{portfolio_id}/graph/company-metadata/sync?limit=25
 POST /api/v1/portfolios/{portfolio_id}/graph/sec-filings/sync?company_limit=5&filings_per_company=4
 POST /api/v1/portfolios/{portfolio_id}/graph/filing-evidence/sync?filing_limit=4&evidence_per_filing=5
+POST /api/v1/portfolios/{portfolio_id}/graph/evidence-semantic-candidates/sync?evidence_limit=10&candidates_per_evidence=5
 GET  /api/v1/portfolios/{portfolio_id}/graph/paths
 GET  /api/v1/portfolios/{portfolio_id}/graph/structural-exposure
 ```

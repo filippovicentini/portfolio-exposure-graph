@@ -12,6 +12,8 @@ from app.domain.models import (
     CompanyMetadata,
     CompanyMetadataTarget,
     CompanyResolution,
+    EvidenceSemanticCandidateBatch,
+    EvidenceSemanticTarget,
     EtfHolding,
     ExposurePath,
     FilingEvidenceBatch,
@@ -243,6 +245,56 @@ class Neo4jGraphRepository(GraphRepository):
     SET r.source_document_id = item.accession_number,
         r.source_url = item.source_url,
         r.extraction_method = item.extraction_method,
+        r.updated_at = datetime()
+    """
+
+    EVIDENCE_SEMANTIC_TARGETS_QUERY = """
+    MATCH path =
+      (p:Portfolio {portfolio_id: $portfolio_id})
+      -[:OWNS|HOLDS*1..2]->(asset:Asset)
+      -[:REPRESENTS]->(company:Company)
+      -[:FILED]->(filing:Filing)
+      -[:CONTAINS_EVIDENCE]->(evidence:Evidence)
+    WHERE evidence.evidence_type = 'dependency_candidate'
+      AND NOT ('semantic_candidates_extracted_at' IN keys(evidence))
+    WITH company, filing, evidence, min(length(path)) AS path_length
+    RETURN evidence.evidence_id AS evidence_id,
+           company.cik AS subject_cik,
+           company.name AS subject_name,
+           filing.accession_number AS accession_number,
+           evidence.evidence_text AS evidence_text,
+           evidence.source_url AS source_url,
+           evidence.source_date AS source_date
+    ORDER BY path_length ASC, evidence.source_date DESC, evidence.evidence_id ASC
+    LIMIT $limit
+    """
+
+    MARK_EVIDENCE_SEMANTIC_EXTRACTED_QUERY = """
+    UNWIND $evidence AS item
+    MATCH (evidence:Evidence {evidence_id: item.evidence_id})
+    SET evidence.semantic_candidates_extracted_at = datetime(),
+        evidence.semantic_candidate_extraction_method = item.extraction_method,
+        evidence.semantic_candidate_model = item.model_name,
+        evidence.semantic_candidate_count = item.candidate_count,
+        evidence.updated_at = datetime()
+    """
+
+    UPSERT_RELATIONSHIP_CANDIDATES_QUERY = """
+    UNWIND $candidates AS item
+    MATCH (evidence:Evidence {evidence_id: item.evidence_id})
+    MERGE (candidate:RelationshipCandidate {candidate_id: item.candidate_id})
+    SET candidate.subject_cik = item.subject_cik,
+        candidate.subject_name = item.subject_name,
+        candidate.object_mention = item.object_mention,
+        candidate.proposed_relation = item.proposed_relation,
+        candidate.role = item.role,
+        candidate.supporting_text = item.supporting_text,
+        candidate.extraction_method = item.extraction_method,
+        candidate.model_name = item.model_name,
+        candidate.updated_at = datetime()
+    MERGE (evidence)-[r:SUPPORTS_CANDIDATE]->(candidate)
+    SET r.extraction_method = item.extraction_method,
+        r.model_name = item.model_name,
         r.updated_at = datetime()
     """
 
@@ -581,6 +633,75 @@ class Neo4jGraphRepository(GraphRepository):
             self.driver.execute_query(
                 self.UPSERT_EVIDENCE_QUERY,
                 evidence=evidence,
+                database_=self.database,
+            )
+
+    def get_evidence_semantic_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[EvidenceSemanticTarget]:
+        records, _, _ = self.driver.execute_query(
+            self.EVIDENCE_SEMANTIC_TARGETS_QUERY,
+            portfolio_id=str(portfolio_id),
+            limit=limit,
+            database_=self.database,
+        )
+        return [
+            EvidenceSemanticTarget(
+                evidence_id=str(record["evidence_id"]),
+                subject_cik=str(record["subject_cik"]),
+                subject_name=str(record["subject_name"]),
+                accession_number=str(record["accession_number"]),
+                evidence_text=str(record["evidence_text"]),
+                source_url=str(record["source_url"]),
+                source_date=record["source_date"],
+            )
+            for record in records
+        ]
+
+    def sync_evidence_semantic_candidates(
+        self,
+        candidate_batches: Mapping[str, EvidenceSemanticCandidateBatch],
+    ) -> None:
+        if not candidate_batches:
+            return
+
+        evidence = [
+            {
+                "evidence_id": batch.evidence_id,
+                "extraction_method": batch.extraction_method,
+                "model_name": batch.model_name,
+                "candidate_count": len(batch.candidates),
+            }
+            for _, batch in sorted(candidate_batches.items())
+        ]
+        self.driver.execute_query(
+            self.MARK_EVIDENCE_SEMANTIC_EXTRACTED_QUERY,
+            evidence=evidence,
+            database_=self.database,
+        )
+
+        candidates = [
+            {
+                "candidate_id": item.candidate_id,
+                "evidence_id": item.evidence_id,
+                "subject_cik": item.subject_cik,
+                "subject_name": item.subject_name,
+                "object_mention": item.object_mention,
+                "proposed_relation": item.proposed_relation.value,
+                "role": item.role.value,
+                "supporting_text": item.supporting_text,
+                "extraction_method": item.extraction_method,
+                "model_name": item.model_name,
+            }
+            for _, batch in sorted(candidate_batches.items())
+            for item in batch.candidates
+        ]
+        if candidates:
+            self.driver.execute_query(
+                self.UPSERT_RELATIONSHIP_CANDIDATES_QUERY,
+                candidates=candidates,
                 database_=self.database,
             )
 

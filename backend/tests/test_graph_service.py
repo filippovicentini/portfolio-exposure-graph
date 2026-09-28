@@ -7,6 +7,7 @@ from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, Cand
 from app.domain.models import (
     AssetResolution,
     CandidateEntityResolutionTarget,
+    DependencyPromotionTarget,
     CompanyFilingTarget,
     CompanyFilings,
     CompanyMetadata,
@@ -228,6 +229,9 @@ class FakeGraphRepository(GraphRepository):
         self.synced_semantic_candidates = None
         self.entity_resolution_targets: list[CandidateEntityResolutionTarget] = []
         self.synced_entity_resolutions = None
+        self.dependency_promotion_targets: list[DependencyPromotionTarget] = []
+        self.synced_dependency_promotions = None
+        self.synced_dependency_rejections = None
         self.suppliers_by_alias: dict[str, SupplierIdentity] = {}
 
     def sync_portfolio(self, portfolio, etf_holdings, company_resolutions) -> None:
@@ -280,6 +284,15 @@ class FakeGraphRepository(GraphRepository):
         for resolution in resolutions:
             for alias in resolution.supplier.aliases:
                 self.suppliers_by_alias[alias.casefold()] = resolution.supplier
+
+    def get_dependency_promotion_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[DependencyPromotionTarget]:
+        return self.dependency_promotion_targets[:limit]
+
+    def sync_evidence_backed_dependencies(self, promotions, rejections) -> None:
+        self.synced_dependency_promotions = list(promotions)
+        self.synced_dependency_rejections = list(rejections)
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -919,3 +932,127 @@ def test_graph_service_reuses_existing_supplier_alias(client, portfolio_reposito
     resolution = graph_repository.synced_entity_resolutions[0]
     assert resolution.supplier.supplier_id == "supplier:existing-tsmc"
     assert resolution.supplier.canonical_name == existing.canonical_name
+
+
+def test_graph_service_promotes_resolved_evidence_candidates_and_deduplicates_edges(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Promotions", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    evidence_text = (
+        "We utilize foundries, such as Samsung Electronics Co., Ltd., or Samsung, "
+        "to produce our semiconductor wafers. We purchase memory from Samsung."
+    )
+    common = dict(
+        subject_cik="0001045810",
+        subject_name="NVIDIA CORP",
+        supplier_id="supplier:samsung",
+        supplier_canonical_name="Samsung Electronics Co., Ltd.",
+        supplier_aliases=["Samsung Electronics Co., Ltd.", "Samsung"],
+        proposed_relation=CandidateRelationType.DEPENDS_ON,
+        evidence_id="evidence-1",
+        evidence_text=evidence_text,
+        accession_number="0001045810-26-000001",
+        source_url="https://example.com/filing.htm",
+        source_date=date(2026, 2, 25),
+        extraction_method="ollama_structured_dependency_v1",
+        model_name="qwen3:4b-instruct",
+        entity_resolution_method="evidence_alias_exact_v1",
+    )
+    graph_repository.dependency_promotion_targets = [
+        DependencyPromotionTarget(
+            candidate_id="candidate-samsung-foundry",
+            object_mention="Samsung Electronics Co., Ltd.",
+            role=CandidateRole.FOUNDRY,
+            supporting_text=(
+                "We utilize foundries, such as Samsung Electronics Co., Ltd., or Samsung, "
+                "to produce our semiconductor wafers."
+            ),
+            **common,
+        ),
+        DependencyPromotionTarget(
+            candidate_id="candidate-samsung-memory",
+            object_mention="Samsung",
+            role=CandidateRole.MEMORY_SUPPLIER,
+            supporting_text="We purchase memory from Samsung.",
+            **common,
+        ),
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+    )
+
+    result = service.sync_evidence_backed_dependencies(portfolio_id, candidate_limit=2)
+
+    assert result is not None
+    assert result.candidates_requested == 2
+    assert result.candidates_promoted == 2
+    assert result.dependency_edges_synced == 1
+    assert result.candidates_rejected == 0
+    assert result.rejected_candidate_ids == []
+    assert result.unresolved_candidate_ids == []
+    assert len(graph_repository.synced_dependency_promotions) == 2
+    assert graph_repository.synced_dependency_rejections == []
+
+
+def test_graph_service_marks_deterministic_dependency_rejections(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Rejected promotion", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    graph_repository.dependency_promotion_targets = [
+        DependencyPromotionTarget(
+            candidate_id="candidate-other",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            supplier_id="supplier:generic",
+            supplier_canonical_name="Generic Partner",
+            supplier_aliases=["Generic Partner"],
+            object_mention="Generic Partner",
+            proposed_relation=CandidateRelationType.DEPENDS_ON,
+            role=CandidateRole.OTHER,
+            supporting_text="We work with Generic Partner.",
+            evidence_id="evidence-other",
+            evidence_text="We work with Generic Partner.",
+            accession_number="0001045810-26-000001",
+            source_url="https://example.com/filing.htm",
+            source_date=date(2026, 2, 25),
+            extraction_method="ollama_structured_dependency_v1",
+            model_name="qwen3:4b-instruct",
+            entity_resolution_method="evidence_alias_exact_v1",
+        )
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+    )
+
+    result = service.sync_evidence_backed_dependencies(portfolio_id)
+
+    assert result is not None
+    assert result.candidates_promoted == 0
+    assert result.dependency_edges_synced == 0
+    assert result.candidates_rejected == 1
+    assert result.rejected_candidate_ids == ["candidate-other"]
+    assert result.unresolved_candidate_ids == []
+    assert graph_repository.synced_dependency_promotions == []
+    assert graph_repository.synced_dependency_rejections[0].reason == "unsupported_role"

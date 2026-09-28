@@ -7,6 +7,9 @@ from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
     CandidateEntityResolution,
     CandidateEntityResolutionSyncResult,
+    DependencyPromotionRejection,
+    EvidenceBackedDependenciesSyncResult,
+    EvidenceBackedDependency,
     CompanyFilings,
     CompanyFilingsSyncResult,
     CompanyMetadata,
@@ -32,6 +35,10 @@ from app.providers.base import (
 from app.repositories.graph_repository import GraphRepository
 from app.repositories.portfolio_repository import PortfolioRepository
 from app.services.candidate_entity_resolver import DeterministicCandidateEntityResolver
+from app.services.dependency_promoter import (
+    DependencyPromotionRejected,
+    DeterministicDependencyPromoter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +57,7 @@ class GraphService:
         filing_evidence_provider: FilingEvidenceProvider,
         semantic_candidate_provider: EvidenceSemanticCandidateProvider | None = None,
         candidate_entity_resolver: DeterministicCandidateEntityResolver | None = None,
+        dependency_promoter: DeterministicDependencyPromoter | None = None,
     ) -> None:
         self.portfolio_repository = portfolio_repository
         self.graph_repository = graph_repository
@@ -62,6 +70,7 @@ class GraphService:
         self.candidate_entity_resolver = (
             candidate_entity_resolver or DeterministicCandidateEntityResolver()
         )
+        self.dependency_promoter = dependency_promoter or DeterministicDependencyPromoter()
 
     def sync(self, portfolio_id: UUID) -> GraphSyncResult | None:
         portfolio = self.portfolio_repository.get(portfolio_id)
@@ -394,6 +403,59 @@ class GraphService:
             candidates_resolved=len(resolutions),
             suppliers_synced=len(
                 {resolution.supplier.supplier_id for resolution in resolutions}
+            ),
+            unresolved_candidate_ids=sorted(set(unresolved)),
+        )
+
+    def sync_evidence_backed_dependencies(
+        self,
+        portfolio_id: UUID,
+        candidate_limit: int = 25,
+    ) -> EvidenceBackedDependenciesSyncResult | None:
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+
+        targets = self.graph_repository.get_dependency_promotion_targets(
+            portfolio_id,
+            limit=candidate_limit,
+        )
+        promotions: list[EvidenceBackedDependency] = []
+        rejections: list[DependencyPromotionRejection] = []
+        unresolved: list[str] = []
+
+        for target in targets:
+            try:
+                promotions.append(self.dependency_promoter.promote(target))
+            except DependencyPromotionRejected as exc:
+                rejections.append(
+                    DependencyPromotionRejection(
+                        candidate_id=target.candidate_id,
+                        reason=exc.reason,
+                        promotion_method=self.dependency_promoter.PROMOTION_METHOD,
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Dependency promotion failed for candidate %s",
+                    target.candidate_id,
+                )
+                unresolved.append(target.candidate_id)
+
+        self.graph_repository.sync_evidence_backed_dependencies(
+            promotions,
+            rejections,
+        )
+
+        return EvidenceBackedDependenciesSyncResult(
+            portfolio_id=portfolio_id,
+            candidates_requested=len(targets),
+            candidates_promoted=len(promotions),
+            dependency_edges_synced=len(
+                {(item.subject_cik, item.supplier_id) for item in promotions}
+            ),
+            candidates_rejected=len(rejections),
+            rejected_candidate_ids=sorted(
+                item.candidate_id for item in rejections
             ),
             unresolved_candidate_ids=sorted(set(unresolved)),
         )

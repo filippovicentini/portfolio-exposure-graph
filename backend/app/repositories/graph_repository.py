@@ -12,6 +12,9 @@ from app.domain.models import (
     CompanyMetadata,
     CompanyMetadataTarget,
     CompanyResolution,
+    DependencyPromotionRejection,
+    DependencyPromotionTarget,
+    EvidenceBackedDependency,
     EvidenceSemanticCandidateBatch,
     EvidenceSemanticTarget,
     EtfHolding,
@@ -116,6 +119,22 @@ class GraphRepository(ABC):
     def sync_candidate_entity_resolutions(
         self,
         resolutions: list[CandidateEntityResolution],
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_dependency_promotion_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[DependencyPromotionTarget]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def sync_evidence_backed_dependencies(
+        self,
+        promotions: list[EvidenceBackedDependency],
+        rejections: list[DependencyPromotionRejection],
     ) -> None:
         raise NotImplementedError
 

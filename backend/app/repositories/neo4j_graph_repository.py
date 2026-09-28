@@ -9,6 +9,9 @@ from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
     CandidateEntityResolution,
     CandidateEntityResolutionTarget,
+    DependencyPromotionRejection,
+    DependencyPromotionTarget,
+    EvidenceBackedDependency,
     CompanyFilingTarget,
     CompanyFilings,
     CompanyMetadata,
@@ -357,6 +360,89 @@ class Neo4jGraphRepository(GraphRepository):
     MERGE (candidate)-[r:RESOLVES_TO]->(supplier)
     SET r.resolution_method = item.resolution_method,
         r.updated_at = datetime()
+    """
+
+    DEPENDENCY_PROMOTION_TARGETS_QUERY = """
+    MATCH path =
+      (p:Portfolio {portfolio_id: $portfolio_id})
+      -[:OWNS|HOLDS*1..2]->(asset:Asset)
+      -[:REPRESENTS]->(company:Company)
+      -[:FILED]->(filing:Filing)
+      -[:CONTAINS_EVIDENCE]->(evidence:Evidence)
+      -[:SUPPORTS_CANDIDATE]->(candidate:RelationshipCandidate)
+      -[:RESOLVES_TO]->(supplier:Supplier)
+    WHERE candidate.proposed_relation = 'DEPENDS_ON'
+      AND NOT ('dependency_promotion_status' IN keys(candidate))
+    WITH company, filing, evidence, candidate, supplier, min(length(path)) AS path_length
+    RETURN candidate.candidate_id AS candidate_id,
+           company.cik AS subject_cik,
+           company.name AS subject_name,
+           supplier.supplier_id AS supplier_id,
+           supplier.canonical_name AS supplier_canonical_name,
+           supplier.aliases AS supplier_aliases,
+           candidate.object_mention AS object_mention,
+           candidate.proposed_relation AS proposed_relation,
+           candidate.role AS role,
+           candidate.supporting_text AS supporting_text,
+           evidence.evidence_id AS evidence_id,
+           evidence.evidence_text AS evidence_text,
+           filing.accession_number AS accession_number,
+           evidence.source_url AS source_url,
+           evidence.source_date AS source_date,
+           candidate.extraction_method AS extraction_method,
+           candidate.model_name AS model_name,
+           candidate.entity_resolution_method AS entity_resolution_method
+    ORDER BY path_length ASC, evidence.source_date DESC, candidate.candidate_id ASC
+    LIMIT $limit
+    """
+
+    UPSERT_EVIDENCE_BACKED_DEPENDENCIES_QUERY = """
+    UNWIND $promotions AS item
+    MATCH (company:Company {cik: item.subject_cik})
+          -[:FILED]->(filing:Filing {accession_number: item.accession_number})
+          -[:CONTAINS_EVIDENCE]->(evidence:Evidence {evidence_id: item.evidence_id})
+          -[:SUPPORTS_CANDIDATE]->(candidate:RelationshipCandidate {candidate_id: item.candidate_id})
+          -[:RESOLVES_TO]->(supplier:Supplier {supplier_id: item.supplier_id})
+    MERGE (company)-[dependency:DEPENDS_ON]->(supplier)
+    SET dependency.roles = reduce(
+            acc = coalesce(dependency.roles, []),
+            value IN [item.role] |
+            CASE WHEN value IN acc THEN acc ELSE acc + value END
+        ),
+        dependency.candidate_ids = reduce(
+            acc = coalesce(dependency.candidate_ids, []),
+            value IN [item.candidate_id] |
+            CASE WHEN value IN acc THEN acc ELSE acc + value END
+        ),
+        dependency.evidence_ids = reduce(
+            acc = coalesce(dependency.evidence_ids, []),
+            value IN [item.evidence_id] |
+            CASE WHEN value IN acc THEN acc ELSE acc + value END
+        ),
+        dependency.accession_numbers = reduce(
+            acc = coalesce(dependency.accession_numbers, []),
+            value IN [item.accession_number] |
+            CASE WHEN value IN acc THEN acc ELSE acc + value END
+        ),
+        dependency.basis = 'qualitative_evidence',
+        dependency.promotion_method = item.promotion_method,
+        dependency.updated_at = datetime()
+    WITH dependency, candidate, item
+    SET dependency.provenance_count = size(dependency.candidate_ids),
+        candidate.dependency_promotion_status = 'promoted',
+        candidate.dependency_promoted_at = datetime(),
+        candidate.dependency_promotion_method = item.promotion_method,
+        candidate.updated_at = datetime()
+    """
+
+    MARK_DEPENDENCY_PROMOTION_REJECTIONS_QUERY = """
+    UNWIND $rejections AS item
+    MATCH (candidate:RelationshipCandidate {candidate_id: item.candidate_id})
+    SET candidate.dependency_promotion_status = 'rejected',
+        candidate.dependency_promotion_reason = item.reason,
+        candidate.dependency_promotion_method = item.promotion_method,
+        candidate.dependency_promotion_reviewed_at = datetime(),
+        candidate.updated_at = datetime()
     """
 
     INDUSTRY_EXPOSURES_QUERY = """
@@ -828,6 +914,80 @@ class Neo4jGraphRepository(GraphRepository):
             resolutions=payload,
             database_=self.database,
         )
+
+    def get_dependency_promotion_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[DependencyPromotionTarget]:
+        records, _, _ = self.driver.execute_query(
+            self.DEPENDENCY_PROMOTION_TARGETS_QUERY,
+            portfolio_id=str(portfolio_id),
+            limit=limit,
+            database_=self.database,
+        )
+        return [
+            DependencyPromotionTarget(
+                candidate_id=str(record["candidate_id"]),
+                subject_cik=str(record["subject_cik"]),
+                subject_name=str(record["subject_name"]),
+                supplier_id=str(record["supplier_id"]),
+                supplier_canonical_name=str(record["supplier_canonical_name"]),
+                supplier_aliases=[str(alias) for alias in record["supplier_aliases"]],
+                object_mention=str(record["object_mention"]),
+                proposed_relation=str(record["proposed_relation"]),
+                role=str(record["role"]),
+                supporting_text=str(record["supporting_text"]),
+                evidence_id=str(record["evidence_id"]),
+                evidence_text=str(record["evidence_text"]),
+                accession_number=str(record["accession_number"]),
+                source_url=str(record["source_url"]),
+                source_date=record["source_date"],
+                extraction_method=str(record["extraction_method"]),
+                model_name=str(record["model_name"]),
+                entity_resolution_method=str(record["entity_resolution_method"]),
+            )
+            for record in records
+        ]
+
+    def sync_evidence_backed_dependencies(
+        self,
+        promotions: list[EvidenceBackedDependency],
+        rejections: list[DependencyPromotionRejection],
+    ) -> None:
+        if promotions:
+            payload = [
+                {
+                    "candidate_id": item.candidate_id,
+                    "subject_cik": item.subject_cik,
+                    "supplier_id": item.supplier_id,
+                    "role": item.role.value,
+                    "evidence_id": item.evidence_id,
+                    "accession_number": item.accession_number,
+                    "promotion_method": item.promotion_method,
+                }
+                for item in promotions
+            ]
+            self.driver.execute_query(
+                self.UPSERT_EVIDENCE_BACKED_DEPENDENCIES_QUERY,
+                promotions=payload,
+                database_=self.database,
+            )
+
+        if rejections:
+            payload = [
+                {
+                    "candidate_id": item.candidate_id,
+                    "reason": item.reason,
+                    "promotion_method": item.promotion_method,
+                }
+                for item in rejections
+            ]
+            self.driver.execute_query(
+                self.MARK_DEPENDENCY_PROMOTION_REJECTIONS_QUERY,
+                rejections=payload,
+                database_=self.database,
+            )
 
     def get_industry_exposures(
         self,

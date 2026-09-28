@@ -261,6 +261,53 @@ class EvidenceSemanticCandidatesSyncResult(BaseModel):
     unresolved_evidence_ids: list[str] = Field(default_factory=list)
 
 
+class CandidateEntityResolutionTarget(BaseModel):
+    candidate_id: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    subject_cik: str = Field(min_length=1, max_length=10)
+    subject_name: str = Field(min_length=1)
+    object_mention: str = Field(min_length=1)
+    role: CandidateRole
+    supporting_text: str = Field(min_length=1)
+    evidence_text: str = Field(min_length=1)
+
+
+class SupplierIdentity(BaseModel):
+    supplier_id: str = Field(min_length=1)
+    canonical_name: str = Field(min_length=1)
+    aliases: list[str] = Field(min_length=1)
+
+    @field_validator("aliases")
+    @classmethod
+    def normalize_aliases(cls, value: list[str]) -> list[str]:
+        aliases: list[str] = []
+        seen: set[str] = set()
+        for alias in value:
+            cleaned = alias.strip()
+            key = cleaned.casefold()
+            if not cleaned or key in seen:
+                continue
+            seen.add(key)
+            aliases.append(cleaned)
+        if not aliases:
+            raise ValueError("Supplier aliases cannot be empty")
+        return aliases
+
+
+class CandidateEntityResolution(BaseModel):
+    candidate_id: str = Field(min_length=1)
+    supplier: SupplierIdentity
+    resolution_method: str = Field(min_length=1)
+
+
+class CandidateEntityResolutionSyncResult(BaseModel):
+    portfolio_id: UUID
+    candidates_requested: int = Field(ge=0)
+    candidates_resolved: int = Field(ge=0)
+    suppliers_synced: int = Field(ge=0)
+    unresolved_candidate_ids: list[str] = Field(default_factory=list)
+
+
 class StructuralExposureItem(BaseModel):
     code: str = Field(min_length=1)
     name: str = Field(min_length=1)

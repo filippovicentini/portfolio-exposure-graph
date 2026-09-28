@@ -6,6 +6,7 @@ from uuid import UUID
 from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, CandidateRole
 from app.domain.models import (
     AssetResolution,
+    CandidateEntityResolutionTarget,
     CompanyFilingTarget,
     CompanyFilings,
     CompanyMetadata,
@@ -20,6 +21,7 @@ from app.domain.models import (
     RelationshipCandidate,
     SecFiling,
     StructuralExposureItem,
+    SupplierIdentity,
 )
 from app.providers.base import (
     AssetDataProvider,
@@ -224,6 +226,9 @@ class FakeGraphRepository(GraphRepository):
         self.synced_evidence = None
         self.semantic_targets: list[EvidenceSemanticTarget] = []
         self.synced_semantic_candidates = None
+        self.entity_resolution_targets: list[CandidateEntityResolutionTarget] = []
+        self.synced_entity_resolutions = None
+        self.suppliers_by_alias: dict[str, SupplierIdentity] = {}
 
     def sync_portfolio(self, portfolio, etf_holdings, company_resolutions) -> None:
         self.synced_portfolio = portfolio
@@ -261,6 +266,20 @@ class FakeGraphRepository(GraphRepository):
 
     def sync_evidence_semantic_candidates(self, candidate_batches) -> None:
         self.synced_semantic_candidates = dict(candidate_batches)
+
+    def get_candidate_entity_resolution_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[CandidateEntityResolutionTarget]:
+        return self.entity_resolution_targets[:limit]
+
+    def get_supplier_by_alias(self, alias: str) -> SupplierIdentity | None:
+        return self.suppliers_by_alias.get(alias.casefold())
+
+    def sync_candidate_entity_resolutions(self, resolutions) -> None:
+        self.synced_entity_resolutions = list(resolutions)
+        for resolution in resolutions:
+            for alias in resolution.supplier.aliases:
+                self.suppliers_by_alias[alias.casefold()] = resolution.supplier
 
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
@@ -795,3 +814,108 @@ def test_graph_service_without_semantic_provider_leaves_evidence_unprocessed(
     assert result.evidence_processed == 0
     assert result.unresolved_evidence_ids == ["evidence-1"]
     assert graph_repository.synced_semantic_candidates == {}
+
+
+def test_graph_service_resolves_candidate_entities_and_deduplicates_aliases(
+    client, portfolio_repository
+):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Entity resolution", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    evidence_text = (
+        "We utilize foundries, such as Samsung Electronics Co., Ltd., or Samsung, "
+        "to produce our semiconductor wafers. We purchase memory from Samsung."
+    )
+    graph_repository.entity_resolution_targets = [
+        CandidateEntityResolutionTarget(
+            candidate_id="candidate-samsung-foundry",
+            evidence_id="evidence-1",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            object_mention="Samsung Electronics Co., Ltd.",
+            role=CandidateRole.FOUNDRY,
+            supporting_text=evidence_text,
+            evidence_text=evidence_text,
+        ),
+        CandidateEntityResolutionTarget(
+            candidate_id="candidate-samsung-memory",
+            evidence_id="evidence-1",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            object_mention="Samsung",
+            role=CandidateRole.MEMORY_SUPPLIER,
+            supporting_text=evidence_text,
+            evidence_text=evidence_text,
+        ),
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+    )
+
+    result = service.sync_candidate_entity_resolutions(portfolio_id, candidate_limit=2)
+
+    assert result is not None
+    assert result.candidates_requested == 2
+    assert result.candidates_resolved == 2
+    assert result.suppliers_synced == 1
+    assert result.unresolved_candidate_ids == []
+    assert len(graph_repository.synced_entity_resolutions) == 2
+    supplier_ids = {
+        resolution.supplier.supplier_id
+        for resolution in graph_repository.synced_entity_resolutions
+    }
+    assert len(supplier_ids) == 1
+
+
+def test_graph_service_reuses_existing_supplier_alias(client, portfolio_repository):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Existing supplier", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+    graph_repository = FakeGraphRepository()
+    existing = SupplierIdentity(
+        supplier_id="supplier:existing-tsmc",
+        canonical_name="Taiwan Semiconductor Manufacturing Company Limited",
+        aliases=["Taiwan Semiconductor Manufacturing Company Limited", "TSMC"],
+    )
+    graph_repository.suppliers_by_alias["tsmc"] = existing
+    graph_repository.entity_resolution_targets = [
+        CandidateEntityResolutionTarget(
+            candidate_id="candidate-tsmc",
+            evidence_id="evidence-2",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            object_mention="TSMC",
+            role=CandidateRole.FOUNDRY,
+            supporting_text="We rely on TSMC for wafer fabrication.",
+            evidence_text="We rely on TSMC for wafer fabrication.",
+        )
+    ]
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+    )
+
+    result = service.sync_candidate_entity_resolutions(portfolio_id)
+
+    assert result is not None
+    assert result.candidates_resolved == 1
+    assert result.suppliers_synced == 1
+    resolution = graph_repository.synced_entity_resolutions[0]
+    assert resolution.supplier.supplier_id == "supplier:existing-tsmc"
+    assert resolution.supplier.canonical_name == existing.canonical_name

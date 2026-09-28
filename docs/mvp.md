@@ -11,10 +11,11 @@
 7. Ingest recent SEC 10-K/10-Q filing metadata as canonical source-document nodes.
 8. Extract traceable dependency-candidate evidence from SEC filing text without promoting it to graph facts.
 9. Represent structured relationship candidates separately from trusted graph relationships, preserving their source Evidence, with optional local Ollama extraction.
-10. Store evidence/provenance for document-derived edges.
-11. Return exposure paths explaining why a portfolio is connected to an entity.
-12. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.
-13. Provide a small interactive web UI.
+10. Resolve exact candidate mentions into reusable internal Supplier identities while preserving evidence-derived aliases and keeping relationship roles on the candidate.
+11. Store evidence/provenance for document-derived edges.
+12. Return exposure paths explaining why a portfolio is connected to an entity.
+13. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.
+14. Provide a small interactive web UI.
 
 ## Explicitly out of scope
 

@@ -7,6 +7,7 @@ from app.dependencies import graph_service
 from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, CandidateRole
 from app.domain.models import (
     AssetResolution,
+    CandidateEntityResolutionTarget,
     CompanyFilingTarget,
     CompanyFilings,
     CompanyMetadata,
@@ -21,6 +22,7 @@ from app.domain.models import (
     RelationshipCandidate,
     SecFiling,
     StructuralExposureItem,
+    SupplierIdentity,
 )
 from app.providers.base import (
     AssetDataProvider,
@@ -202,6 +204,32 @@ class FakeGraphRepository(GraphRepository):
     def sync_evidence_semantic_candidates(self, candidate_batches) -> None:
         self.semantic_candidates_synced = dict(candidate_batches)
 
+    def get_candidate_entity_resolution_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[CandidateEntityResolutionTarget]:
+        evidence_text = (
+            "We utilize foundries, such as Taiwan Semiconductor Manufacturing Company Limited, "
+            "or TSMC, to produce our semiconductor wafers."
+        )
+        return [
+            CandidateEntityResolutionTarget(
+                candidate_id="candidate-1",
+                evidence_id="evidence-1",
+                subject_cik="0001045810",
+                subject_name="NVIDIA CORP",
+                object_mention="Taiwan Semiconductor Manufacturing Company Limited",
+                role=CandidateRole.FOUNDRY,
+                supporting_text=evidence_text,
+                evidence_text=evidence_text,
+            )
+        ][:limit]
+
+    def get_supplier_by_alias(self, alias: str) -> SupplierIdentity | None:
+        return None
+
+    def sync_candidate_entity_resolutions(self, resolutions) -> None:
+        self.entity_resolutions_synced = list(resolutions)
+
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
             ExposurePath(
@@ -277,6 +305,9 @@ def test_graph_sync_and_paths_endpoints(client):
         semantic_response = client.post(
             f"/api/v1/portfolios/{portfolio_id}/graph/evidence-semantic-candidates/sync?evidence_limit=1&candidates_per_evidence=1"
         )
+        entity_response = client.post(
+            f"/api/v1/portfolios/{portfolio_id}/graph/candidate-entities/sync?candidate_limit=1"
+        )
         paths_response = client.get(
             f"/api/v1/portfolios/{portfolio_id}/graph/paths"
         )
@@ -335,6 +366,15 @@ def test_graph_sync_and_paths_endpoints(client):
         "candidates_synced": 1,
         "evidence_without_candidates": [],
         "unresolved_evidence_ids": [],
+    }
+
+    assert entity_response.status_code == 200
+    assert entity_response.json() == {
+        "portfolio_id": portfolio_id,
+        "candidates_requested": 1,
+        "candidates_resolved": 1,
+        "suppliers_synced": 1,
+        "unresolved_candidate_ids": [],
     }
 
     assert paths_response.status_code == 200

@@ -13,6 +13,8 @@ from app.domain.enums import (
 )
 from app.domain.models import (
     AssetResolution,
+    CandidateEntityResolution,
+    CandidateEntityResolutionTarget,
     CompanyFilings,
     CompanyMetadata,
     CompanyResolution,
@@ -24,6 +26,7 @@ from app.domain.models import (
     PortfolioPosition,
     RelationshipCandidate,
     SecFiling,
+    SupplierIdentity,
 )
 from app.repositories.neo4j_graph_repository import Neo4jGraphRepository
 
@@ -41,6 +44,8 @@ class FakeDriver:
         self.filing_target_records = []
         self.evidence_target_records = []
         self.semantic_target_records = []
+        self.entity_resolution_target_records = []
+        self.supplier_alias_records = []
         self.industry_exposure_records = []
         self.country_exposure_records = []
 
@@ -60,6 +65,10 @@ class FakeDriver:
             return self.evidence_target_records, SimpleNamespace(), []
         if "'semantic_candidates_extracted_at' IN keys(evidence)" in query:
             return self.semantic_target_records, SimpleNamespace(), []
+        if "'entity_resolved_at' IN keys(candidate)" in query:
+            return self.entity_resolution_target_records, SimpleNamespace(), []
+        if "MATCH (supplier:Supplier)" in query and "supplier.aliases AS aliases" in query:
+            return self.supplier_alias_records, SimpleNamespace(), []
         return [], SimpleNamespace(), []
 
     def close(self):
@@ -368,6 +377,90 @@ def test_neo4j_repository_lists_and_writes_evidence_semantic_candidates():
     assert candidate_call["candidates"][0]["proposed_relation"] == "DEPENDS_ON"
     assert candidate_call["candidates"][0]["role"] == "foundry"
 
+
+
+def test_neo4j_repository_lists_resolves_and_reuses_supplier_identities():
+    driver = FakeDriver()
+    driver.entity_resolution_target_records = [
+        FakeRecord(
+            candidate_id="candidate-1",
+            evidence_id="evidence-1",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            object_mention="Samsung",
+            role="memory_supplier",
+            supporting_text="We purchase memory from Samsung.",
+            evidence_text=(
+                "We utilize foundries, such as Samsung Electronics Co., Ltd., or Samsung, "
+                "to produce our semiconductor wafers. We purchase memory from Samsung."
+            ),
+        )
+    ]
+    driver.supplier_alias_records = [
+        FakeRecord(
+            supplier_id="supplier:samsung",
+            canonical_name="Samsung Electronics Co., Ltd.",
+            aliases=["Samsung Electronics Co., Ltd.", "Samsung"],
+        )
+    ]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused",
+        user="neo4j",
+        password="test",
+        driver=driver,
+    )
+    portfolio_id = uuid4()
+
+    targets = repository.get_candidate_entity_resolution_targets(portfolio_id, limit=5)
+    supplier = repository.get_supplier_by_alias("Samsung")
+    repository.sync_candidate_entity_resolutions(
+        [
+            CandidateEntityResolution(
+                candidate_id="candidate-1",
+                supplier=SupplierIdentity(
+                    supplier_id="supplier:samsung",
+                    canonical_name="Samsung Electronics Co., Ltd.",
+                    aliases=["Samsung Electronics Co., Ltd.", "Samsung"],
+                ),
+                resolution_method="evidence_alias_exact_v1",
+            )
+        ]
+    )
+
+    assert targets == [
+        CandidateEntityResolutionTarget(
+            candidate_id="candidate-1",
+            evidence_id="evidence-1",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            object_mention="Samsung",
+            role=CandidateRole.MEMORY_SUPPLIER,
+            supporting_text="We purchase memory from Samsung.",
+            evidence_text=(
+                "We utilize foundries, such as Samsung Electronics Co., Ltd., or Samsung, "
+                "to produce our semiconductor wafers. We purchase memory from Samsung."
+            ),
+        )
+    ]
+    assert supplier is not None
+    assert supplier.supplier_id == "supplier:samsung"
+
+    target_query, target_call = driver.calls[0]
+    assert "[:SUPPORTS_CANDIDATE]->(candidate:RelationshipCandidate)" in target_query
+    assert "'entity_resolved_at' IN keys(candidate)" in target_query
+    assert target_call["limit"] == 5
+
+    alias_query, alias_call = driver.calls[1]
+    assert "MATCH (supplier:Supplier)" in alias_query
+    assert alias_call["alias"] == "Samsung"
+
+    resolution_query, resolution_call = driver.calls[2]
+    assert "MERGE (supplier:Supplier {supplier_id: item.supplier_id})" in resolution_query
+    assert "MERGE (candidate)-[r:RESOLVES_TO]->(supplier)" in resolution_query
+    assert "candidate.entity_resolved_at = datetime()" in resolution_query
+    assert resolution_call["resolutions"][0]["canonical_name"] == (
+        "Samsung Electronics Co., Ltd."
+    )
 
 def test_neo4j_repository_parses_exposure_paths():
     driver = FakeDriver()

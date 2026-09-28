@@ -7,6 +7,8 @@ from neo4j import GraphDatabase
 
 from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
+    CandidateEntityResolution,
+    CandidateEntityResolutionTarget,
     CompanyFilingTarget,
     CompanyFilings,
     CompanyMetadata,
@@ -20,6 +22,7 @@ from app.domain.models import (
     FilingEvidenceTarget,
     Portfolio,
     StructuralExposureItem,
+    SupplierIdentity,
 )
 from app.repositories.graph_repository import GraphRepository
 
@@ -295,6 +298,64 @@ class Neo4jGraphRepository(GraphRepository):
     MERGE (evidence)-[r:SUPPORTS_CANDIDATE]->(candidate)
     SET r.extraction_method = item.extraction_method,
         r.model_name = item.model_name,
+        r.updated_at = datetime()
+    """
+
+    CANDIDATE_ENTITY_RESOLUTION_TARGETS_QUERY = """
+    MATCH path =
+      (p:Portfolio {portfolio_id: $portfolio_id})
+      -[:OWNS|HOLDS*1..2]->(asset:Asset)
+      -[:REPRESENTS]->(company:Company)
+      -[:FILED]->(filing:Filing)
+      -[:CONTAINS_EVIDENCE]->(evidence:Evidence)
+      -[:SUPPORTS_CANDIDATE]->(candidate:RelationshipCandidate)
+    WHERE NOT ('entity_resolved_at' IN keys(candidate))
+    WITH company, evidence, candidate, min(length(path)) AS path_length
+    RETURN candidate.candidate_id AS candidate_id,
+           evidence.evidence_id AS evidence_id,
+           company.cik AS subject_cik,
+           company.name AS subject_name,
+           candidate.object_mention AS object_mention,
+           candidate.role AS role,
+           candidate.supporting_text AS supporting_text,
+           evidence.evidence_text AS evidence_text
+    ORDER BY path_length ASC, evidence.source_date DESC, candidate.candidate_id ASC
+    LIMIT $limit
+    """
+
+    SUPPLIER_BY_ALIAS_QUERY = """
+    MATCH (supplier:Supplier)
+    WHERE any(alias IN coalesce(supplier.aliases, [])
+              WHERE toLower(trim(alias)) = toLower(trim($alias)))
+    RETURN supplier.supplier_id AS supplier_id,
+           supplier.canonical_name AS canonical_name,
+           supplier.aliases AS aliases
+    ORDER BY supplier.supplier_id ASC
+    LIMIT 1
+    """
+
+    UPSERT_CANDIDATE_ENTITY_RESOLUTIONS_QUERY = """
+    UNWIND $resolutions AS item
+    MATCH (candidate:RelationshipCandidate {candidate_id: item.candidate_id})
+    MERGE (supplier:Supplier {supplier_id: item.supplier_id})
+    ON CREATE SET supplier.canonical_name = item.canonical_name,
+                  supplier.aliases = []
+    SET supplier.canonical_name = coalesce(supplier.canonical_name, item.canonical_name),
+        supplier.aliases = reduce(
+            acc = coalesce(supplier.aliases, []),
+            alias IN item.aliases |
+            CASE
+                WHEN any(existing IN acc WHERE toLower(existing) = toLower(alias)) THEN acc
+                ELSE acc + alias
+            END
+        ),
+        supplier.updated_at = datetime(),
+        candidate.entity_resolved_at = datetime(),
+        candidate.entity_resolution_method = item.resolution_method,
+        candidate.resolved_supplier_id = item.supplier_id,
+        candidate.updated_at = datetime()
+    MERGE (candidate)-[r:RESOLVES_TO]->(supplier)
+    SET r.resolution_method = item.resolution_method,
         r.updated_at = datetime()
     """
 
@@ -704,6 +765,69 @@ class Neo4jGraphRepository(GraphRepository):
                 candidates=candidates,
                 database_=self.database,
             )
+
+    def get_candidate_entity_resolution_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[CandidateEntityResolutionTarget]:
+        records, _, _ = self.driver.execute_query(
+            self.CANDIDATE_ENTITY_RESOLUTION_TARGETS_QUERY,
+            portfolio_id=str(portfolio_id),
+            limit=limit,
+            database_=self.database,
+        )
+        return [
+            CandidateEntityResolutionTarget(
+                candidate_id=str(record["candidate_id"]),
+                evidence_id=str(record["evidence_id"]),
+                subject_cik=str(record["subject_cik"]),
+                subject_name=str(record["subject_name"]),
+                object_mention=str(record["object_mention"]),
+                role=str(record["role"]),
+                supporting_text=str(record["supporting_text"]),
+                evidence_text=str(record["evidence_text"]),
+            )
+            for record in records
+        ]
+
+    def get_supplier_by_alias(self, alias: str) -> SupplierIdentity | None:
+        records, _, _ = self.driver.execute_query(
+            self.SUPPLIER_BY_ALIAS_QUERY,
+            alias=alias,
+            database_=self.database,
+        )
+        if not records:
+            return None
+        record = records[0]
+        return SupplierIdentity(
+            supplier_id=str(record["supplier_id"]),
+            canonical_name=str(record["canonical_name"]),
+            aliases=[str(alias) for alias in record["aliases"]],
+        )
+
+    def sync_candidate_entity_resolutions(
+        self,
+        resolutions: list[CandidateEntityResolution],
+    ) -> None:
+        if not resolutions:
+            return
+
+        payload = [
+            {
+                "candidate_id": resolution.candidate_id,
+                "supplier_id": resolution.supplier.supplier_id,
+                "canonical_name": resolution.supplier.canonical_name,
+                "aliases": resolution.supplier.aliases,
+                "resolution_method": resolution.resolution_method,
+            }
+            for resolution in resolutions
+        ]
+        self.driver.execute_query(
+            self.UPSERT_CANDIDATE_ENTITY_RESOLUTIONS_QUERY,
+            resolutions=payload,
+            database_=self.database,
+        )
 
     def get_industry_exposures(
         self,

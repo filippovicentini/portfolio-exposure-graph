@@ -25,11 +25,12 @@ Implemented:
 - deterministic filing evidence extraction into provenance-preserving Evidence nodes
 - semantic relationship-candidate graph plumbing from Evidence, with provider abstraction and no automatic dependency promotion
 - optional local Ollama semantic extraction with structured JSON output and deterministic post-validation
+- deterministic candidate-entity resolution into internal canonical `Supplier` identities with evidence-derived aliases
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
-- resolve candidate object mentions to canonical companies/suppliers
+- enrich internal Supplier identities with external identifiers where defensible
 - promote validated candidates into sourced supplier/dependency relationships
 - small frontend
 
@@ -56,7 +57,7 @@ SEC filing ingestion is also bounded and currently stores only recent `10-K` and
 
 Filing evidence extraction is a separate bounded step. It downloads stored SEC primary-document URLs and records conservative dependency-related excerpts as `Evidence` nodes linked with `CONTAINS_EVIDENCE`. Extraction is deterministic keyword matching (`sec_html_dependency_keywords_v3`), not an AI judgment. An evidence node is only a source excerpt/candidate and does not create or imply a `DEPENDS_ON` relationship.
 
-The next graph layer stores structured `RelationshipCandidate` nodes linked from source evidence with `SUPPORTS_CANDIDATE`. An optional local Ollama provider can populate these candidates from Evidence using constrained JSON output plus deterministic validation of verbatim mentions and supporting text. If no semantic provider is configured, targets remain unresolved and are not marked as processed. A candidate is not a trusted graph fact and does not create `DEPENDS_ON`.
+The next graph layer stores structured `RelationshipCandidate` nodes linked from source evidence with `SUPPORTS_CANDIDATE`. An optional local Ollama provider can populate these candidates from Evidence using constrained JSON output plus deterministic validation of verbatim mentions and supporting text. If no semantic provider is configured, targets remain unresolved and are not marked as processed. Candidate mentions can then be resolved deterministically into internal canonical `Supplier` identities through `RESOLVES_TO`. Explicit filing aliases such as `Samsung Electronics Co., Ltd., or Samsung` are preserved and reused; exact aliases already known in the graph are reused conservatively. A resolved Supplier is still not a trusted dependency fact and does not create `DEPENDS_ON`.
 
 Structural exposure aggregation reuses only sourced numeric weights already present on `OWNS` and `HOLDS`. An industry bucket therefore means "portfolio/look-through weight whose canonical company has this SEC primary SIC". A country bucket means "portfolio/look-through weight whose canonical company has this SEC business-address country". It is not a revenue-by-country estimate, and no numeric weight is inferred from `OPERATES_IN` or `BASED_IN` themselves. Coverage fields report how much portfolio/look-through weight currently has metadata for each dimension.
 
@@ -112,6 +113,7 @@ POST /api/v1/portfolios/{portfolio_id}/graph/company-metadata/sync?limit=25
 POST /api/v1/portfolios/{portfolio_id}/graph/sec-filings/sync?company_limit=5&filings_per_company=4
 POST /api/v1/portfolios/{portfolio_id}/graph/filing-evidence/sync?filing_limit=4&evidence_per_filing=5
 POST /api/v1/portfolios/{portfolio_id}/graph/evidence-semantic-candidates/sync?evidence_limit=10&candidates_per_evidence=5
+POST /api/v1/portfolios/{portfolio_id}/graph/candidate-entities/sync?candidate_limit=25
 GET  /api/v1/portfolios/{portfolio_id}/graph/paths
 GET  /api/v1/portfolios/{portfolio_id}/graph/structural-exposure
 ```

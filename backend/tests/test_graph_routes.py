@@ -8,6 +8,7 @@ from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, Cand
 from app.domain.models import (
     AssetResolution,
     CandidateEntityResolutionTarget,
+    DependencyPromotionTarget,
     CompanyFilingTarget,
     CompanyFilings,
     CompanyMetadata,
@@ -230,6 +231,37 @@ class FakeGraphRepository(GraphRepository):
     def sync_candidate_entity_resolutions(self, resolutions) -> None:
         self.entity_resolutions_synced = list(resolutions)
 
+    def get_dependency_promotion_targets(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[DependencyPromotionTarget]:
+        evidence_text = "We utilize foundries, such as TSMC."
+        return [
+            DependencyPromotionTarget(
+                candidate_id="candidate-1",
+                subject_cik="0001045810",
+                subject_name="NVIDIA CORP",
+                supplier_id="supplier:tsmc",
+                supplier_canonical_name="TSMC",
+                supplier_aliases=["TSMC"],
+                object_mention="TSMC",
+                proposed_relation=CandidateRelationType.DEPENDS_ON,
+                role=CandidateRole.FOUNDRY,
+                supporting_text=evidence_text,
+                evidence_id="evidence-1",
+                evidence_text=evidence_text,
+                accession_number="0001045810-26-000001",
+                source_url="https://example.com/filing.htm",
+                source_date=date(2026, 2, 25),
+                extraction_method="fake_semantic_v1",
+                model_name="fake-model",
+                entity_resolution_method="evidence_alias_exact_v1",
+            )
+        ][:limit]
+
+    def sync_evidence_backed_dependencies(self, promotions, rejections) -> None:
+        self.dependency_promotions_synced = list(promotions)
+        self.dependency_rejections_synced = list(rejections)
+
     def get_exposure_paths(self, portfolio_id: UUID) -> list[ExposurePath]:
         return [
             ExposurePath(
@@ -308,6 +340,9 @@ def test_graph_sync_and_paths_endpoints(client):
         entity_response = client.post(
             f"/api/v1/portfolios/{portfolio_id}/graph/candidate-entities/sync?candidate_limit=1"
         )
+        dependency_response = client.post(
+            f"/api/v1/portfolios/{portfolio_id}/graph/evidence-backed-dependencies/sync?candidate_limit=1"
+        )
         paths_response = client.get(
             f"/api/v1/portfolios/{portfolio_id}/graph/paths"
         )
@@ -374,6 +409,17 @@ def test_graph_sync_and_paths_endpoints(client):
         "candidates_requested": 1,
         "candidates_resolved": 1,
         "suppliers_synced": 1,
+        "unresolved_candidate_ids": [],
+    }
+
+    assert dependency_response.status_code == 200
+    assert dependency_response.json() == {
+        "portfolio_id": portfolio_id,
+        "candidates_requested": 1,
+        "candidates_promoted": 1,
+        "dependency_edges_synced": 1,
+        "candidates_rejected": 0,
+        "rejected_candidate_ids": [],
         "unresolved_candidate_ids": [],
     }
 

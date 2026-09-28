@@ -38,9 +38,9 @@ The graph answers one product question:
 
 ## Provenance rule
 
-Every AI- or document-derived structural edge must carry provenance before it can be marked trusted:
+Every AI- or document-derived structural edge must remain traceably linked to provenance before it can be marked trusted. Full source metadata lives on `Filing`, `Evidence`, and `RelationshipCandidate`; promoted edges keep the candidate/evidence/accession identifiers needed to traverse back to that source material. Provenance includes:
 
-- `source_document_id`
+- `source_document_id` / filing accession number
 - `source_url`
 - `source_date`
 - `evidence_text`
@@ -67,6 +67,7 @@ The graph separates listed instruments from canonical companies:
 - Filing excerpts selected by deterministic dependency keywords are stored as `(:Evidence {evidence_id})` nodes and linked with `(:Filing)-[:CONTAINS_EVIDENCE]->(:Evidence)`. Evidence stores the source document accession number, URL, filing date, matched terms, excerpt text, and extraction method.
 - Structured semantic proposals are stored as `(:RelationshipCandidate {candidate_id})` nodes linked with `(:Evidence)-[:SUPPORTS_CANDIDATE]->(:RelationshipCandidate)`. Candidates keep the subject CIK/name, exact object mention, proposed relationship, controlled role, supporting text, extraction method, and model name.
 - Candidate object mentions can be resolved into internal `(:Supplier {supplier_id})` identities with `(:RelationshipCandidate)-[:RESOLVES_TO]->(:Supplier)`. Supplier identity is deliberately conservative: explicit aliases in the same Evidence are reused, exact aliases already known in the graph can be reused, and no external legal identifier is invented. The candidate role remains on `RelationshipCandidate`, so one Supplier can legitimately appear in multiple roles.
+- Fully resolved candidates can be promoted deterministically into `(:Company)-[:DEPENDS_ON]->(:Supplier)` edges. Promotion is qualitative only. The edge stores controlled roles plus candidate, Evidence, and filing accession identifiers; the complete source excerpt and source URL remain on the provenance nodes upstream. Multiple candidates for the same Company/Supplier pair merge into one dependency edge while preserving all supporting candidate/evidence identifiers.
 
 `OPERATES_IN` currently means the company's primary SEC SIC classification, not an inferred list of every industry in which it participates. `BASED_IN` currently means the country derived from the SEC business address, not geographic revenue exposure. U.S. state codes are normalized to EDGAR code `X1` (United States), and Canadian province codes to `Z4` (Canada).
 
@@ -77,5 +78,7 @@ Filing evidence extraction downloads source documents only in a bounded explicit
 Semantic-candidate extraction is also bounded and best-effort. The graph/repository/service/provider contract exists independently of any LLM vendor. The optional Ollama implementation uses a local model with a constrained JSON schema and then deterministically rejects non-verbatim object mentions, non-verbatim supporting text, subject-company self references, and duplicates. When no semantic provider is configured or the local model is unavailable, unresolved evidence is left unmarked so it can be processed later.
 
 Candidate-entity resolution is a separate deterministic step. It creates internal Supplier identities from exact object mentions, captures explicit filing aliases such as `Taiwan Semiconductor Manufacturing Company Limited, or TSMC`, and reuses exact aliases already stored in the graph. It does not collapse merely similar corporate names, assign CIK/LEI/ticker identifiers, or validate the proposed dependency itself. `RelationshipCandidate` therefore remains an intermediate proposal even after `RESOLVES_TO`; no `DEPENDS_ON` edge is created by this layer.
+
+Dependency promotion is another explicit bounded step. A candidate is promotable only when it proposes `DEPENDS_ON`, resolves to a Supplier, uses a supported upstream role, keeps the object mention verbatim inside the supporting text, keeps the supporting text verbatim inside the source Evidence, and the object mention matches an exact Supplier alias. The graph path itself must tie that Evidence back to the same Company and Filing. Candidates with deterministic validation failures are marked rejected with a reason; unexpected technical failures remain unmarked so they can be retried. Promoted `DEPENDS_ON` edges are qualitative and do not create or imply a numeric exposure percentage.
 
 Company resolution is deliberately best-effort. A provider failure or an unresolved ETF constituent does not block portfolio graph sync; the asset remains in the graph and the sync response reports its ticker in `unresolved_company_assets`. Company metadata enrichment is also best-effort and runs in bounded batches so a large ETF does not cause hundreds of SEC requests in a single synchronous operation. Successfully enriched companies are marked with `sec_metadata_synced_at` and the SEC source URL so the shared graph can reuse the metadata across portfolios.

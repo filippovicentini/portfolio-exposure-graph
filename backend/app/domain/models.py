@@ -308,6 +308,53 @@ class CandidateEntityResolutionSyncResult(BaseModel):
     unresolved_candidate_ids: list[str] = Field(default_factory=list)
 
 
+class DependencyPromotionTarget(BaseModel):
+    candidate_id: str = Field(min_length=1)
+    subject_cik: str = Field(min_length=1, max_length=10)
+    subject_name: str = Field(min_length=1)
+    supplier_id: str = Field(min_length=1)
+    supplier_canonical_name: str = Field(min_length=1)
+    supplier_aliases: list[str] = Field(min_length=1)
+    object_mention: str = Field(min_length=1)
+    proposed_relation: CandidateRelationType
+    role: CandidateRole
+    supporting_text: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    evidence_text: str = Field(min_length=1)
+    accession_number: str = Field(min_length=1)
+    source_url: str = Field(min_length=1)
+    source_date: date
+    extraction_method: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+    entity_resolution_method: str = Field(min_length=1)
+
+
+class EvidenceBackedDependency(BaseModel):
+    candidate_id: str = Field(min_length=1)
+    subject_cik: str = Field(min_length=1, max_length=10)
+    supplier_id: str = Field(min_length=1)
+    role: CandidateRole
+    evidence_id: str = Field(min_length=1)
+    accession_number: str = Field(min_length=1)
+    promotion_method: str = Field(min_length=1)
+
+
+class DependencyPromotionRejection(BaseModel):
+    candidate_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+    promotion_method: str = Field(min_length=1)
+
+
+class EvidenceBackedDependenciesSyncResult(BaseModel):
+    portfolio_id: UUID
+    candidates_requested: int = Field(ge=0)
+    candidates_promoted: int = Field(ge=0)
+    dependency_edges_synced: int = Field(ge=0)
+    candidates_rejected: int = Field(ge=0)
+    rejected_candidate_ids: list[str] = Field(default_factory=list)
+    unresolved_candidate_ids: list[str] = Field(default_factory=list)
+
+
 class StructuralExposureItem(BaseModel):
     code: str = Field(min_length=1)
     name: str = Field(min_length=1)

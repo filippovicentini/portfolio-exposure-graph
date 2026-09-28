@@ -7,6 +7,7 @@ from app.domain.models import (
     CandidateEntityResolutionSyncResult,
     CompanyFilingsSyncResult,
     CompanyMetadataSyncResult,
+    EvidenceBackedDependenciesSyncResult,
     EvidenceSemanticCandidatesSyncResult,
     FilingEvidenceSyncResult,
     GraphSyncResult,
@@ -129,6 +130,23 @@ def sync_portfolio_candidate_entities(
     candidate_limit: int = Query(default=25, ge=1, le=100),
 ) -> CandidateEntityResolutionSyncResult:
     result = graph_service.sync_candidate_entity_resolutions(
+        portfolio_id,
+        candidate_limit=candidate_limit,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/evidence-backed-dependencies/sync",
+    response_model=EvidenceBackedDependenciesSyncResult,
+)
+def sync_portfolio_evidence_backed_dependencies(
+    portfolio_id: UUID,
+    candidate_limit: int = Query(default=25, ge=1, le=100),
+) -> EvidenceBackedDependenciesSyncResult:
+    result = graph_service.sync_evidence_backed_dependencies(
         portfolio_id,
         candidate_limit=candidate_limit,
     )

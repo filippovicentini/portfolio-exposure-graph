@@ -15,6 +15,9 @@ from app.domain.models import (
     AssetResolution,
     CandidateEntityResolution,
     CandidateEntityResolutionTarget,
+    DependencyPromotionRejection,
+    DependencyPromotionTarget,
+    EvidenceBackedDependency,
     CompanyFilings,
     CompanyMetadata,
     CompanyResolution,
@@ -45,6 +48,7 @@ class FakeDriver:
         self.evidence_target_records = []
         self.semantic_target_records = []
         self.entity_resolution_target_records = []
+        self.dependency_promotion_target_records = []
         self.supplier_alias_records = []
         self.industry_exposure_records = []
         self.country_exposure_records = []
@@ -67,6 +71,8 @@ class FakeDriver:
             return self.semantic_target_records, SimpleNamespace(), []
         if "'entity_resolved_at' IN keys(candidate)" in query:
             return self.entity_resolution_target_records, SimpleNamespace(), []
+        if "'dependency_promotion_status' IN keys(candidate)" in query:
+            return self.dependency_promotion_target_records, SimpleNamespace(), []
         if "MATCH (supplier:Supplier)" in query and "supplier.aliases AS aliases" in query:
             return self.supplier_alias_records, SimpleNamespace(), []
         return [], SimpleNamespace(), []
@@ -541,3 +547,95 @@ def test_neo4j_repository_closes_driver():
     repository.close()
 
     assert driver.closed is True
+
+
+def test_neo4j_repository_lists_and_writes_evidence_backed_dependencies():
+    driver = FakeDriver()
+    driver.dependency_promotion_target_records = [
+        FakeRecord(
+            candidate_id="candidate-tsmc",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            supplier_id="supplier:tsmc",
+            supplier_canonical_name="Taiwan Semiconductor Manufacturing Company Limited",
+            supplier_aliases=["Taiwan Semiconductor Manufacturing Company Limited", "TSMC"],
+            object_mention="TSMC",
+            proposed_relation="DEPENDS_ON",
+            role="foundry",
+            supporting_text="We utilize foundries, such as TSMC.",
+            evidence_id="evidence-1",
+            evidence_text="We utilize foundries, such as TSMC.",
+            accession_number="0001045810-26-000001",
+            source_url="https://example.com/filing.htm",
+            source_date=date(2026, 2, 25),
+            extraction_method="ollama_structured_dependency_v1",
+            model_name="qwen3:4b-instruct",
+            entity_resolution_method="evidence_alias_exact_v1",
+        )
+    ]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused",
+        user="neo4j",
+        password="test",
+        driver=driver,
+    )
+    portfolio_id = uuid4()
+
+    targets = repository.get_dependency_promotion_targets(portfolio_id, limit=5)
+    repository.sync_evidence_backed_dependencies(
+        [
+            EvidenceBackedDependency(
+                candidate_id="candidate-tsmc",
+                subject_cik="0001045810",
+                supplier_id="supplier:tsmc",
+                role=CandidateRole.FOUNDRY,
+                evidence_id="evidence-1",
+                accession_number="0001045810-26-000001",
+                promotion_method="resolved_evidence_candidate_v1",
+            )
+        ],
+        [
+            DependencyPromotionRejection(
+                candidate_id="candidate-rejected",
+                reason="unsupported_role",
+                promotion_method="resolved_evidence_candidate_v1",
+            )
+        ],
+    )
+
+    assert targets == [
+        DependencyPromotionTarget(
+            candidate_id="candidate-tsmc",
+            subject_cik="0001045810",
+            subject_name="NVIDIA CORP",
+            supplier_id="supplier:tsmc",
+            supplier_canonical_name="Taiwan Semiconductor Manufacturing Company Limited",
+            supplier_aliases=["Taiwan Semiconductor Manufacturing Company Limited", "TSMC"],
+            object_mention="TSMC",
+            proposed_relation=CandidateRelationType.DEPENDS_ON,
+            role=CandidateRole.FOUNDRY,
+            supporting_text="We utilize foundries, such as TSMC.",
+            evidence_id="evidence-1",
+            evidence_text="We utilize foundries, such as TSMC.",
+            accession_number="0001045810-26-000001",
+            source_url="https://example.com/filing.htm",
+            source_date=date(2026, 2, 25),
+            extraction_method="ollama_structured_dependency_v1",
+            model_name="qwen3:4b-instruct",
+            entity_resolution_method="evidence_alias_exact_v1",
+        )
+    ]
+
+    target_query, target_call = driver.calls[0]
+    assert "candidate.proposed_relation = 'DEPENDS_ON'" in target_query
+    assert "dependency_promotion_status" in target_query
+    assert target_call["limit"] == 5
+
+    promotion_query, promotion_call = driver.calls[1]
+    assert "MERGE (company)-[dependency:DEPENDS_ON]->(supplier)" in promotion_query
+    assert "dependency.basis = 'qualitative_evidence'" in promotion_query
+    assert promotion_call["promotions"][0]["role"] == "foundry"
+
+    rejection_query, rejection_call = driver.calls[2]
+    assert "dependency_promotion_status = 'rejected'" in rejection_query
+    assert rejection_call["rejections"][0]["reason"] == "unsupported_role"

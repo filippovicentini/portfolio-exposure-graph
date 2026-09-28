@@ -8,6 +8,8 @@ from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, Cand
 from app.domain.models import (
     AssetResolution,
     CandidateEntityResolutionTarget,
+    DependencyPath,
+    DependencyProvenance,
     DependencyPromotionTarget,
     CompanyFilingTarget,
     CompanyFilings,
@@ -271,6 +273,39 @@ class FakeGraphRepository(GraphRepository):
             )
         ]
 
+    def get_dependency_paths(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[DependencyPath]:
+        return [
+            DependencyPath(
+                asset_path=["QQQ", "NVDA"],
+                relations=["OWNS", "HOLDS", "REPRESENTS", "DEPENDS_ON"],
+                company_cik="0001045810",
+                company_name="NVIDIA CORP",
+                supplier_id="supplier:tsmc",
+                supplier_name="Taiwan Semiconductor Manufacturing Company Limited",
+                roles=[CandidateRole.FOUNDRY],
+                company_path_weight_pct=2.4,
+                basis="qualitative_evidence",
+                promotion_method="resolved_evidence_candidate_v1",
+                provenance=[
+                    DependencyProvenance(
+                        candidate_id="candidate-1",
+                        evidence_id="evidence-1",
+                        accession_number="0001045810-26-000001",
+                        object_mention="TSMC",
+                        role=CandidateRole.FOUNDRY,
+                        supporting_text="We utilize foundries, such as TSMC.",
+                        source_url="https://example.com/filing.htm",
+                        source_date=date(2026, 2, 25),
+                        extraction_method="fake_semantic_v1",
+                        model_name="fake-model",
+                        entity_resolution_method="evidence_alias_exact_v1",
+                    )
+                ],
+            )
+        ][:limit]
+
     def get_industry_exposures(
         self, portfolio_id: UUID
     ) -> list[StructuralExposureItem]:
@@ -345,6 +380,9 @@ def test_graph_sync_and_paths_endpoints(client):
         )
         paths_response = client.get(
             f"/api/v1/portfolios/{portfolio_id}/graph/paths"
+        )
+        dependency_paths_response = client.get(
+            f"/api/v1/portfolios/{portfolio_id}/graph/dependency-paths?limit=1"
         )
         structural_response = client.get(
             f"/api/v1/portfolios/{portfolio_id}/graph/structural-exposure"
@@ -431,6 +469,44 @@ def test_graph_sync_and_paths_endpoints(client):
             "effective_weight_pct": 2.4,
         }
     ]
+
+    assert dependency_paths_response.status_code == 200
+    dependency_body = dependency_paths_response.json()
+    assert dependency_body["portfolio_id"] == portfolio_id
+    assert dependency_body["weight_basis"].startswith("Sourced OWNS")
+    assert dependency_body["dependency_basis"].startswith(
+        "Qualitative evidence-backed DEPENDS_ON"
+    )
+    assert dependency_body["paths"] == [
+        {
+            "asset_path": ["QQQ", "NVDA"],
+            "relations": ["OWNS", "HOLDS", "REPRESENTS", "DEPENDS_ON"],
+            "company_cik": "0001045810",
+            "company_name": "NVIDIA CORP",
+            "supplier_id": "supplier:tsmc",
+            "supplier_name": "Taiwan Semiconductor Manufacturing Company Limited",
+            "roles": ["foundry"],
+            "company_path_weight_pct": 2.4,
+            "basis": "qualitative_evidence",
+            "promotion_method": "resolved_evidence_candidate_v1",
+            "provenance": [
+                {
+                    "candidate_id": "candidate-1",
+                    "evidence_id": "evidence-1",
+                    "accession_number": "0001045810-26-000001",
+                    "object_mention": "TSMC",
+                    "role": "foundry",
+                    "supporting_text": "We utilize foundries, such as TSMC.",
+                    "source_url": "https://example.com/filing.htm",
+                    "source_date": "2026-02-25",
+                    "extraction_method": "fake_semantic_v1",
+                    "model_name": "fake-model",
+                    "entity_resolution_method": "evidence_alias_exact_v1",
+                }
+            ],
+        }
+    ]
+
     assert structural_response.status_code == 200
     assert structural_response.json() == {
         "portfolio_id": portfolio_id,

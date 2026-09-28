@@ -14,7 +14,7 @@
 10. Resolve exact candidate mentions into reusable internal Supplier identities while preserving evidence-derived aliases and keeping relationship roles on the candidate.
 11. Promote only resolved, source-verifiable dependency candidates into qualitative `DEPENDS_ON` edges while preserving graph-linked provenance.
 12. Store evidence/provenance for document-derived edges.
-13. Return exposure paths explaining why a portfolio is connected to an entity.
+13. Return bounded exposure and supplier-dependency paths explaining why a portfolio is connected to an entity, including source provenance for promoted dependencies.
 14. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.
 15. Provide a small interactive web UI.
 

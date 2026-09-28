@@ -12,6 +12,7 @@ from app.domain.models import (
     CompanyMetadata,
     CompanyMetadataTarget,
     CompanyResolution,
+    DependencyPath,
     DependencyPromotionRejection,
     DependencyPromotionTarget,
     EvidenceBackedDependency,
@@ -136,6 +137,14 @@ class GraphRepository(ABC):
         promotions: list[EvidenceBackedDependency],
         rejections: list[DependencyPromotionRejection],
     ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_dependency_paths(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[DependencyPath]:
         raise NotImplementedError
 
     @abstractmethod

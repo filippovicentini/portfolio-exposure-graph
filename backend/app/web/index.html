@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Portfolio Exposure Graph</title>
+  <meta name="description" content="Explainable portfolio dependency paths with source-level provenance.">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Portfolio Exposure Graph home">
+        <span class="brand-mark" aria-hidden="true">PEG</span>
+        <span>
+          <strong>Portfolio Exposure Graph</strong>
+          <small>Local-first dependency intelligence</small>
+        </span>
+      </a>
+      <div class="api-status" id="api-status" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span>Checking API</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Evidence-backed portfolio intelligence</p>
+          <h1>See where your holdings lead.</h1>
+          <p class="hero-copy">
+            Trace direct and ETF look-through holdings to canonical companies and qualitative supplier dependencies,
+            with the SEC evidence that supports every promoted relationship.
+          </p>
+        </div>
+        <div class="hero-note">
+          <span class="hero-note-label">Important</span>
+          <p>Company path weight stops at the company. It is not a supplier dependency percentage or impact estimate.</p>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="control-panel" aria-label="Portfolio controls">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Portfolio</p>
+              <h2>Build a view</h2>
+            </div>
+            <button class="text-button" id="demo-button" type="button">Use NVDA demo</button>
+          </div>
+
+          <label class="field">
+            <span>Portfolio name</span>
+            <input id="portfolio-name" type="text" maxlength="80" value="Dependency View" autocomplete="off">
+          </label>
+
+          <div class="positions-header">
+            <span>Positions</span>
+            <span class="weight-total" id="weight-total">100.00%</span>
+          </div>
+          <div id="positions" class="positions" aria-live="polite"></div>
+
+          <div class="inline-actions">
+            <button class="secondary-button" id="add-position" type="button">+ Add position</button>
+            <button class="secondary-button" id="equalize-weights" type="button">Equal weights</button>
+          </div>
+
+          <button class="primary-button" id="create-sync" type="button">
+            <span>Create &amp; sync portfolio</span>
+            <span aria-hidden="true">→</span>
+          </button>
+
+          <div class="divider"><span>or</span></div>
+
+          <label class="field">
+            <span>Existing live portfolio ID</span>
+            <input id="portfolio-id" type="text" placeholder="UUID from this backend session" autocomplete="off">
+          </label>
+          <button class="secondary-button full-width" id="load-existing" type="button">Load dependency paths</button>
+
+          <details class="pipeline-card">
+            <summary>Optional dependency enrichment</summary>
+            <p>
+              Runs bounded SEC filing, evidence, semantic-candidate, Supplier-resolution, and promotion steps.
+              Semantic extraction requires <code>SEMANTIC_PROVIDER=ollama</code>.
+            </p>
+            <button class="secondary-button full-width" id="run-pipeline" type="button" disabled>
+              Run dependency pipeline
+            </button>
+          </details>
+
+          <div class="session-card" id="session-card" hidden>
+            <span>Active portfolio</span>
+            <code id="active-portfolio-id"></code>
+            <button class="text-button" id="copy-id" type="button">Copy ID</button>
+          </div>
+
+          <div class="activity" aria-live="polite" aria-atomic="false">
+            <div class="activity-heading">
+              <span>Activity</span>
+              <button class="text-button" id="clear-log" type="button">Clear</button>
+            </div>
+            <div id="activity-log" class="activity-log">
+              <p class="muted">Ready.</p>
+            </div>
+          </div>
+        </aside>
+
+        <section class="results-panel" aria-label="Dependency paths">
+          <div class="results-heading">
+            <div>
+              <p class="section-kicker">Dependency paths</p>
+              <h2 id="results-title">No portfolio loaded</h2>
+            </div>
+            <button class="secondary-button" id="refresh-paths" type="button" disabled>Refresh</button>
+          </div>
+
+          <div class="summary-grid" id="summary-grid" hidden>
+            <div class="metric-card">
+              <span>Paths</span>
+              <strong id="metric-paths">0</strong>
+            </div>
+            <div class="metric-card">
+              <span>Suppliers</span>
+              <strong id="metric-suppliers">0</strong>
+            </div>
+            <div class="metric-card">
+              <span>Companies</span>
+              <strong id="metric-companies">0</strong>
+            </div>
+            <div class="metric-card">
+              <span>Evidence items</span>
+              <strong id="metric-evidence">0</strong>
+            </div>
+          </div>
+
+          <div class="basis-card" id="basis-card" hidden>
+            <div>
+              <span class="basis-label">Weight basis</span>
+              <p id="weight-basis"></p>
+            </div>
+            <div>
+              <span class="basis-label">Dependency basis</span>
+              <p id="dependency-basis"></p>
+            </div>
+          </div>
+
+          <div class="filters" id="filters" hidden>
+            <label class="search-field">
+              <span class="sr-only">Search dependency paths</span>
+              <input id="path-search" type="search" placeholder="Search supplier, company, ticker…">
+            </label>
+            <label class="select-field">
+              <span class="sr-only">Filter by role</span>
+              <select id="role-filter">
+                <option value="">All roles</option>
+              </select>
+            </label>
+          </div>
+
+          <div id="results-empty" class="empty-state">
+            <div class="empty-mark" aria-hidden="true">↗</div>
+            <h3>Create or load a portfolio</h3>
+            <p>Dependency paths will appear here with roles, path weights, filing provenance, and source links.</p>
+          </div>
+
+          <div id="dependency-list" class="dependency-list"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <template id="position-row-template">
+    <div class="position-row">
+      <label>
+        <span class="sr-only">Ticker</span>
+        <input class="ticker-input" type="text" maxlength="24" placeholder="Ticker" autocomplete="off">
+      </label>
+      <label>
+        <span class="sr-only">Weight percent</span>
+        <div class="weight-input-wrap">
+          <input class="weight-input" type="number" min="0.01" max="100" step="0.01" placeholder="Weight">
+          <span>%</span>
+        </div>
+      </label>
+      <button class="icon-button remove-position" type="button" aria-label="Remove position">×</button>
+    </div>
+  </template>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

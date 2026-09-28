@@ -49,6 +49,7 @@ class FakeDriver:
         self.semantic_target_records = []
         self.entity_resolution_target_records = []
         self.dependency_promotion_target_records = []
+        self.dependency_path_records = []
         self.supplier_alias_records = []
         self.industry_exposure_records = []
         self.country_exposure_records = []
@@ -59,6 +60,8 @@ class FakeDriver:
             return self.industry_exposure_records, SimpleNamespace(), []
         if "country.sec_code AS code" in query:
             return self.country_exposure_records, SimpleNamespace(), []
+        if "company_path_weight_pct" in query and "dependency:DEPENDS_ON" in query:
+            return self.dependency_path_records, SimpleNamespace(), []
         if "effective_weight_pct" in query:
             return self.path_records, SimpleNamespace(), []
         if "'sec_metadata_synced_at' IN keys(company)" in query:
@@ -639,3 +642,61 @@ def test_neo4j_repository_lists_and_writes_evidence_backed_dependencies():
     rejection_query, rejection_call = driver.calls[2]
     assert "dependency_promotion_status = 'rejected'" in rejection_query
     assert rejection_call["rejections"][0]["reason"] == "unsupported_role"
+
+def test_neo4j_repository_reads_dependency_paths_with_provenance():
+    driver = FakeDriver()
+    driver.dependency_path_records = [
+        FakeRecord(
+            asset_path=["QQQ", "NVDA"],
+            relations=["OWNS", "HOLDS", "REPRESENTS", "DEPENDS_ON"],
+            company_cik="0001045810",
+            company_name="NVIDIA CORP",
+            supplier_id="supplier:tsmc",
+            supplier_name="Taiwan Semiconductor Manufacturing Company Limited",
+            roles=["foundry"],
+            company_path_weight_pct=2.4000000001,
+            basis="qualitative_evidence",
+            promotion_method="resolved_evidence_candidate_v1",
+            provenance=[
+                {
+                    "candidate_id": "candidate-tsmc",
+                    "evidence_id": "evidence-1",
+                    "accession_number": "0001045810-26-000001",
+                    "object_mention": "TSMC",
+                    "role": "foundry",
+                    "supporting_text": "We utilize foundries, such as TSMC.",
+                    "source_url": "https://example.com/filing.htm",
+                    "source_date": date(2026, 2, 25),
+                    "extraction_method": "fake_semantic_v1",
+                    "model_name": "fake-model",
+                    "entity_resolution_method": "evidence_alias_exact_v1",
+                }
+            ],
+        )
+    ]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused",
+        user="neo4j",
+        password="test",
+        driver=driver,
+    )
+    portfolio_id = uuid4()
+
+    paths = repository.get_dependency_paths(portfolio_id, limit=25)
+
+    assert len(paths) == 1
+    path = paths[0]
+    assert path.asset_path == ["QQQ", "NVDA"]
+    assert path.relations == ["OWNS", "HOLDS", "REPRESENTS", "DEPENDS_ON"]
+    assert path.company_name == "NVIDIA CORP"
+    assert path.supplier_name == "Taiwan Semiconductor Manufacturing Company Limited"
+    assert path.roles == [CandidateRole.FOUNDRY]
+    assert path.company_path_weight_pct == 2.4
+    assert path.provenance[0].object_mention == "TSMC"
+    assert path.provenance[0].source_date == date(2026, 2, 25)
+
+    query, call = driver.calls[0]
+    assert "-[dependency:DEPENDS_ON]->(supplier:Supplier)" in query
+    assert "candidate.candidate_id IN coalesce(dependency.candidate_ids, [])" in query
+    assert call["portfolio_id"] == str(portfolio_id)
+    assert call["limit"] == 25

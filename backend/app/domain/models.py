@@ -355,6 +355,45 @@ class EvidenceBackedDependenciesSyncResult(BaseModel):
     unresolved_candidate_ids: list[str] = Field(default_factory=list)
 
 
+class DependencyProvenance(BaseModel):
+    candidate_id: str = Field(min_length=1)
+    evidence_id: str = Field(min_length=1)
+    accession_number: str = Field(min_length=1)
+    object_mention: str = Field(min_length=1)
+    role: CandidateRole
+    supporting_text: str = Field(min_length=1)
+    source_url: str = Field(min_length=1)
+    source_date: date
+    extraction_method: str = Field(min_length=1)
+    model_name: str = Field(min_length=1)
+    entity_resolution_method: str = Field(min_length=1)
+
+
+class DependencyPath(BaseModel):
+    asset_path: list[str] = Field(min_length=1)
+    relations: list[str] = Field(min_length=1)
+    company_cik: str = Field(min_length=1, max_length=10)
+    company_name: str = Field(min_length=1)
+    supplier_id: str = Field(min_length=1)
+    supplier_name: str = Field(min_length=1)
+    roles: list[CandidateRole] = Field(min_length=1)
+    company_path_weight_pct: float = Field(ge=0)
+    basis: str = Field(min_length=1)
+    promotion_method: str = Field(min_length=1)
+    provenance: list[DependencyProvenance] = Field(min_length=1)
+
+
+class PortfolioDependencyPaths(BaseModel):
+    portfolio_id: UUID
+    paths: list[DependencyPath] = Field(default_factory=list)
+    weight_basis: str = (
+        "Sourced OWNS / one-level OWNS * HOLDS weight reaching the dependent company"
+    )
+    dependency_basis: str = (
+        "Qualitative evidence-backed DEPENDS_ON; no numeric supplier impact is inferred"
+    )
+
+
 class StructuralExposureItem(BaseModel):
     code: str = Field(min_length=1)
     name: str = Field(min_length=1)

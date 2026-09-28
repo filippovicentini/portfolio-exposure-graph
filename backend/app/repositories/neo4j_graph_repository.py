@@ -9,6 +9,8 @@ from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
     CandidateEntityResolution,
     CandidateEntityResolutionTarget,
+    DependencyPath,
+    DependencyProvenance,
     DependencyPromotionRejection,
     DependencyPromotionTarget,
     EvidenceBackedDependency,
@@ -443,6 +445,64 @@ class Neo4jGraphRepository(GraphRepository):
         candidate.dependency_promotion_method = item.promotion_method,
         candidate.dependency_promotion_reviewed_at = datetime(),
         candidate.updated_at = datetime()
+    """
+
+    DEPENDENCY_PATHS_QUERY = """
+    CALL () {
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(asset:Asset:Equity)
+              -[:REPRESENTS]->(company:Company)-[dependency:DEPENDS_ON]->(supplier:Supplier)
+        RETURN [asset.ticker] AS asset_path,
+               ['OWNS', 'REPRESENTS', 'DEPENDS_ON'] AS relations,
+               company,
+               dependency,
+               supplier,
+               owns.weight_pct AS company_path_weight_pct
+        UNION ALL
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(etf:Asset:ETF)
+              -[holds:HOLDS]->(asset:Asset)-[:REPRESENTS]->(company:Company)
+              -[dependency:DEPENDS_ON]->(supplier:Supplier)
+        RETURN [etf.ticker, asset.ticker] AS asset_path,
+               ['OWNS', 'HOLDS', 'REPRESENTS', 'DEPENDS_ON'] AS relations,
+               company,
+               dependency,
+               supplier,
+               owns.weight_pct * holds.weight_pct / 100.0 AS company_path_weight_pct
+    }
+    MATCH (company)-[:FILED]->(filing:Filing)
+          -[:CONTAINS_EVIDENCE]->(evidence:Evidence)
+          -[:SUPPORTS_CANDIDATE]->(candidate:RelationshipCandidate)
+          -[:RESOLVES_TO]->(supplier)
+    WHERE candidate.candidate_id IN coalesce(dependency.candidate_ids, [])
+    WITH asset_path, relations, company, dependency, supplier, company_path_weight_pct,
+         candidate, evidence, filing
+    ORDER BY candidate.candidate_id ASC
+    WITH asset_path, relations, company, dependency, supplier, company_path_weight_pct,
+         collect({
+             candidate_id: candidate.candidate_id,
+             evidence_id: evidence.evidence_id,
+             accession_number: filing.accession_number,
+             object_mention: candidate.object_mention,
+             role: candidate.role,
+             supporting_text: candidate.supporting_text,
+             source_url: evidence.source_url,
+             source_date: evidence.source_date,
+             extraction_method: candidate.extraction_method,
+             model_name: candidate.model_name,
+             entity_resolution_method: candidate.entity_resolution_method
+         }) AS provenance
+    RETURN asset_path,
+           relations,
+           company.cik AS company_cik,
+           company.name AS company_name,
+           supplier.supplier_id AS supplier_id,
+           supplier.canonical_name AS supplier_name,
+           dependency.roles AS roles,
+           company_path_weight_pct,
+           dependency.basis AS basis,
+           dependency.promotion_method AS promotion_method,
+           provenance
+    ORDER BY company_path_weight_pct DESC, company_name ASC, supplier_name ASC, asset_path ASC
+    LIMIT $limit
     """
 
     INDUSTRY_EXPOSURES_QUERY = """
@@ -988,6 +1048,53 @@ class Neo4jGraphRepository(GraphRepository):
                 rejections=payload,
                 database_=self.database,
             )
+
+    def get_dependency_paths(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[DependencyPath]:
+        records, _, _ = self.driver.execute_query(
+            self.DEPENDENCY_PATHS_QUERY,
+            portfolio_id=str(portfolio_id),
+            limit=limit,
+            database_=self.database,
+        )
+        return [
+            DependencyPath(
+                asset_path=[str(item) for item in record["asset_path"]],
+                relations=[str(item) for item in record["relations"]],
+                company_cik=str(record["company_cik"]),
+                company_name=str(record["company_name"]),
+                supplier_id=str(record["supplier_id"]),
+                supplier_name=str(record["supplier_name"]),
+                roles=[str(role) for role in record["roles"]],
+                company_path_weight_pct=round(
+                    float(record["company_path_weight_pct"]), 6
+                ),
+                basis=str(record["basis"]),
+                promotion_method=str(record["promotion_method"]),
+                provenance=[
+                    DependencyProvenance(
+                        candidate_id=str(item["candidate_id"]),
+                        evidence_id=str(item["evidence_id"]),
+                        accession_number=str(item["accession_number"]),
+                        object_mention=str(item["object_mention"]),
+                        role=str(item["role"]),
+                        supporting_text=str(item["supporting_text"]),
+                        source_url=str(item["source_url"]),
+                        source_date=item["source_date"],
+                        extraction_method=str(item["extraction_method"]),
+                        model_name=str(item["model_name"]),
+                        entity_resolution_method=str(
+                            item["entity_resolution_method"]
+                        ),
+                    )
+                    for item in record["provenance"]
+                ],
+            )
+            for record in records
+        ]
 
     def get_industry_exposures(
         self,

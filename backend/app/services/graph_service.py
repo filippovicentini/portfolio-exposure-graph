@@ -20,6 +20,7 @@ from app.domain.models import (
     FilingEvidenceBatch,
     FilingEvidenceSyncResult,
     GraphSyncResult,
+    PortfolioDependencyPaths,
     PortfolioExposurePaths,
     PortfolioStructuralExposure,
     SupplierIdentity,
@@ -508,6 +509,21 @@ class GraphService:
         return PortfolioExposurePaths(
             portfolio_id=portfolio_id,
             paths=self.graph_repository.get_exposure_paths(portfolio_id),
+        )
+
+    def get_dependency_paths(
+        self,
+        portfolio_id: UUID,
+        limit: int = 100,
+    ) -> PortfolioDependencyPaths | None:
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+        return PortfolioDependencyPaths(
+            portfolio_id=portfolio_id,
+            paths=self.graph_repository.get_dependency_paths(
+                portfolio_id,
+                limit=limit,
+            ),
         )
 
     def get_structural_exposure(

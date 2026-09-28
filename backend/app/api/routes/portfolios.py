@@ -13,6 +13,7 @@ from app.domain.models import (
     GraphSyncResult,
     Portfolio,
     PortfolioCreate,
+    PortfolioDependencyPaths,
     PortfolioExposurePaths,
     PortfolioLookthrough,
     PortfolioStructuralExposure,
@@ -158,6 +159,20 @@ def sync_portfolio_evidence_backed_dependencies(
 @router.get("/{portfolio_id}/graph/paths", response_model=PortfolioExposurePaths)
 def get_portfolio_graph_paths(portfolio_id: UUID) -> PortfolioExposurePaths:
     result = graph_service.get_paths(portfolio_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.get(
+    "/{portfolio_id}/graph/dependency-paths",
+    response_model=PortfolioDependencyPaths,
+)
+def get_portfolio_dependency_paths(
+    portfolio_id: UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> PortfolioDependencyPaths:
+    result = graph_service.get_dependency_paths(portfolio_id, limit=limit)
     if result is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     return result

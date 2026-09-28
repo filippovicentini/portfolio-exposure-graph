@@ -7,6 +7,8 @@ from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, Cand
 from app.domain.models import (
     AssetResolution,
     CandidateEntityResolutionTarget,
+    DependencyPath,
+    DependencyProvenance,
     DependencyPromotionTarget,
     CompanyFilingTarget,
     CompanyFilings,
@@ -307,6 +309,67 @@ class FakeGraphRepository(GraphRepository):
                 effective_weight_pct=2.4,
             ),
         ]
+
+    def get_dependency_paths(
+        self, portfolio_id: UUID, limit: int
+    ) -> list[DependencyPath]:
+        paths = [
+            DependencyPath(
+                asset_path=["NVDA"],
+                relations=["OWNS", "REPRESENTS", "DEPENDS_ON"],
+                company_cik="0001045810",
+                company_name="NVIDIA CORP",
+                supplier_id="supplier:tsmc",
+                supplier_name="Taiwan Semiconductor Manufacturing Company Limited",
+                roles=[CandidateRole.FOUNDRY],
+                company_path_weight_pct=70.0,
+                basis="qualitative_evidence",
+                promotion_method="resolved_evidence_candidate_v1",
+                provenance=[
+                    DependencyProvenance(
+                        candidate_id="candidate-tsmc",
+                        evidence_id="evidence-1",
+                        accession_number="0001045810-26-000001",
+                        object_mention="TSMC",
+                        role=CandidateRole.FOUNDRY,
+                        supporting_text="We utilize foundries, such as TSMC.",
+                        source_url="https://example.com/filing.htm",
+                        source_date=date(2026, 2, 25),
+                        extraction_method="fake_semantic_v1",
+                        model_name="fake-model",
+                        entity_resolution_method="evidence_alias_exact_v1",
+                    )
+                ],
+            ),
+            DependencyPath(
+                asset_path=["QQQ", "NVDA"],
+                relations=["OWNS", "HOLDS", "REPRESENTS", "DEPENDS_ON"],
+                company_cik="0001045810",
+                company_name="NVIDIA CORP",
+                supplier_id="supplier:tsmc",
+                supplier_name="Taiwan Semiconductor Manufacturing Company Limited",
+                roles=[CandidateRole.FOUNDRY],
+                company_path_weight_pct=2.4,
+                basis="qualitative_evidence",
+                promotion_method="resolved_evidence_candidate_v1",
+                provenance=[
+                    DependencyProvenance(
+                        candidate_id="candidate-tsmc",
+                        evidence_id="evidence-1",
+                        accession_number="0001045810-26-000001",
+                        object_mention="TSMC",
+                        role=CandidateRole.FOUNDRY,
+                        supporting_text="We utilize foundries, such as TSMC.",
+                        source_url="https://example.com/filing.htm",
+                        source_date=date(2026, 2, 25),
+                        extraction_method="fake_semantic_v1",
+                        model_name="fake-model",
+                        entity_resolution_method="evidence_alias_exact_v1",
+                    )
+                ],
+            ),
+        ]
+        return paths[:limit]
 
     def get_industry_exposures(
         self, portfolio_id: UUID
@@ -1056,3 +1119,56 @@ def test_graph_service_marks_deterministic_dependency_rejections(
     assert result.unresolved_candidate_ids == []
     assert graph_repository.synced_dependency_promotions == []
     assert graph_repository.synced_dependency_rejections[0].reason == "unsupported_role"
+
+def test_graph_service_returns_bounded_dependency_paths(client, portfolio_repository):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={
+            "name": "Dependency paths",
+            "positions": [
+                {"ticker": "NVDA", "weight_pct": 70},
+                {"ticker": "QQQ", "weight_pct": 30},
+            ],
+        },
+    ).json()
+    portfolio_id = UUID(created["portfolio_id"])
+
+    graph_repository = FakeGraphRepository()
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+    )
+
+    result = service.get_dependency_paths(portfolio_id, limit=1)
+
+    assert result is not None
+    assert len(result.paths) == 1
+    assert result.paths[0].asset_path == ["NVDA"]
+    assert result.paths[0].supplier_name == (
+        "Taiwan Semiconductor Manufacturing Company Limited"
+    )
+    assert result.paths[0].company_path_weight_pct == 70.0
+    assert result.paths[0].provenance[0].candidate_id == "candidate-tsmc"
+    assert "no numeric supplier impact" in result.dependency_basis
+
+
+def test_graph_service_dependency_paths_requires_live_portfolio(
+    portfolio_repository,
+):
+    graph_repository = FakeGraphRepository()
+    service = GraphService(
+        portfolio_repository=portfolio_repository,
+        graph_repository=graph_repository,
+        etf_holdings_provider=FakeEtfHoldingsProvider(),
+        company_asset_provider=FakeCompanyAssetProvider(),
+        company_metadata_provider=FakeCompanyMetadataProvider(),
+        company_filings_provider=FakeCompanyFilingsProvider(),
+        filing_evidence_provider=FakeFilingEvidenceProvider(),
+    )
+
+    assert service.get_dependency_paths(UUID(int=0), limit=10) is None

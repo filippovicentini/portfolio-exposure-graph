@@ -27,13 +27,13 @@ Implemented:
 - optional local Ollama semantic extraction with structured JSON output and deterministic post-validation
 - deterministic candidate-entity resolution into internal canonical `Supplier` identities with evidence-derived aliases
 - deterministic promotion of fully resolved, source-verifiable candidates into qualitative `Company -> DEPENDS_ON -> Supplier` edges with graph-linked provenance
+- bounded portfolio dependency-path API with direct/ETF routes and source-level provenance
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
 - enrich internal Supplier identities with external identifiers where defensible
-- surface evidence-backed supplier dependency paths in portfolio exposure APIs
-- small frontend
+- small frontend consuming dependency paths and provenance
 
 Out of scope for the MVP: price prediction, trading recommendations, portfolio optimization, broker integration, and real-time market data.
 
@@ -43,11 +43,13 @@ Out of scope for the MVP: price prediction, trading recommendations, portfolio o
 Portfolio
   |-- OWNS --> Equity Asset -- REPRESENTS --> Company
   |                                      |-- OPERATES_IN --> Industry
-  |                                      `-- BASED_IN ----> Country
+  |                                      |-- BASED_IN ----> Country
+  |                                      `-- DEPENDS_ON --> Supplier
   `-- OWNS --> ETF
                  `-- HOLDS --> Equity Asset -- REPRESENTS --> Company
                                                      |-- OPERATES_IN --> Industry
-                                                     `-- BASED_IN ----> Country
+                                                     |-- BASED_IN ----> Country
+                                                     `-- DEPENDS_ON --> Supplier
 ```
 
 Listed instruments remain `Asset` nodes because the same economic company can be represented by more than one security. When SEC ticker data provides a CIK, the graph creates one canonical `Company` node keyed by that CIK and links the asset with `REPRESENTS`. ETF constituents that cannot be resolved to a canonical company remain valid `Asset` nodes and are reported by graph sync.
@@ -59,6 +61,8 @@ SEC filing ingestion is also bounded and currently stores only recent `10-K` and
 Filing evidence extraction is a separate bounded step. It downloads stored SEC primary-document URLs and records conservative dependency-related excerpts as `Evidence` nodes linked with `CONTAINS_EVIDENCE`. Extraction is deterministic keyword matching (`sec_html_dependency_keywords_v3`), not an AI judgment. An evidence node is only a source excerpt/candidate and does not create or imply a `DEPENDS_ON` relationship.
 
 The next graph layer stores structured `RelationshipCandidate` nodes linked from source evidence with `SUPPORTS_CANDIDATE`. An optional local Ollama provider can populate these candidates from Evidence using constrained JSON output plus deterministic validation of verbatim mentions and supporting text. If no semantic provider is configured, targets remain unresolved and are not marked as processed. Candidate mentions can then be resolved deterministically into internal canonical `Supplier` identities through `RESOLVES_TO`. Explicit filing aliases such as `Samsung Electronics Co., Ltd., or Samsung` are preserved and reused; exact aliases already known in the graph are reused conservatively. A resolved candidate still is not trusted by itself; a separate bounded promotion step re-validates source spans and Supplier aliases before creating a qualitative, provenance-linked `DEPENDS_ON` edge.
+
+The dependency-path API traverses portfolio holdings through canonical companies to promoted Suppliers and returns the source provenance required to explain each dependency. `company_path_weight_pct` is only the sourced direct or one-level ETF look-through weight reaching the dependent Company. It is not a supplier-dependency percentage, and `DEPENDS_ON` adds no numeric multiplier.
 
 Structural exposure aggregation reuses only sourced numeric weights already present on `OWNS` and `HOLDS`. An industry bucket therefore means "portfolio/look-through weight whose canonical company has this SEC primary SIC". A country bucket means "portfolio/look-through weight whose canonical company has this SEC business-address country". It is not a revenue-by-country estimate, and no numeric weight is inferred from `OPERATES_IN` or `BASED_IN` themselves. Coverage fields report how much portfolio/look-through weight currently has metadata for each dimension.
 
@@ -117,6 +121,7 @@ POST /api/v1/portfolios/{portfolio_id}/graph/evidence-semantic-candidates/sync?e
 POST /api/v1/portfolios/{portfolio_id}/graph/candidate-entities/sync?candidate_limit=25
 POST /api/v1/portfolios/{portfolio_id}/graph/evidence-backed-dependencies/sync?candidate_limit=25
 GET  /api/v1/portfolios/{portfolio_id}/graph/paths
+GET  /api/v1/portfolios/{portfolio_id}/graph/dependency-paths?limit=100
 GET  /api/v1/portfolios/{portfolio_id}/graph/structural-exposure
 ```
 

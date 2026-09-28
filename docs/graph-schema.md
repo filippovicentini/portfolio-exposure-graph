@@ -14,7 +14,7 @@ The graph answers one product question:
 | `ETF` | Fund entity used for look-through |
 | `Industry` | Industry classification |
 | `Country` | Geographic exposure/entity |
-| `Supplier` | Company acting as an upstream dependency |
+| `Supplier` | Internal canonical identity for a named upstream supplier candidate |
 | `Filing` | Canonical SEC filing / source document keyed by accession number |
 | `Evidence` | Traceable excerpt extracted from a source document; not a graph fact by itself |
 | `RelationshipCandidate` | Structured relationship proposal extracted from Evidence; not a trusted graph fact |
@@ -33,6 +33,7 @@ The graph answers one product question:
 | `FILED` | Company -> Filing | Provenance / source document |
 | `CONTAINS_EVIDENCE` | Filing -> Evidence | Provenance / extracted source excerpt |
 | `SUPPORTS_CANDIDATE` | Evidence -> RelationshipCandidate | Provenance / semantic extraction proposal |
+| `RESOLVES_TO` | RelationshipCandidate -> Supplier | Internal entity identity resolution; not dependency validation |
 | `EXPOSED_TO` | Company -> Theme | Structural |
 
 ## Provenance rule
@@ -64,7 +65,8 @@ The graph separates listed instruments from canonical companies:
 - SEC business-address metadata can link `Company` to `Country` through `[:BASED_IN]`; the country key is the normalized SEC/EDGAR country code.
 - Recent SEC `10-K` and `10-Q` submissions are stored as `(:Filing {accession_number})` nodes and linked with `(:Company)-[:FILED]->(:Filing)`. The filing node stores document URLs and dates so later document-derived edges can point back to a stable source document.
 - Filing excerpts selected by deterministic dependency keywords are stored as `(:Evidence {evidence_id})` nodes and linked with `(:Filing)-[:CONTAINS_EVIDENCE]->(:Evidence)`. Evidence stores the source document accession number, URL, filing date, matched terms, excerpt text, and extraction method.
-- Structured semantic proposals can be stored as `(:RelationshipCandidate {candidate_id})` nodes linked with `(:Evidence)-[:SUPPORTS_CANDIDATE]->(:RelationshipCandidate)`. Candidates keep the subject CIK/name, exact object mention, proposed relationship, controlled role, supporting text, extraction method, and model name. They are deliberately not connected to canonical supplier/company nodes yet.
+- Structured semantic proposals are stored as `(:RelationshipCandidate {candidate_id})` nodes linked with `(:Evidence)-[:SUPPORTS_CANDIDATE]->(:RelationshipCandidate)`. Candidates keep the subject CIK/name, exact object mention, proposed relationship, controlled role, supporting text, extraction method, and model name.
+- Candidate object mentions can be resolved into internal `(:Supplier {supplier_id})` identities with `(:RelationshipCandidate)-[:RESOLVES_TO]->(:Supplier)`. Supplier identity is deliberately conservative: explicit aliases in the same Evidence are reused, exact aliases already known in the graph can be reused, and no external legal identifier is invented. The candidate role remains on `RelationshipCandidate`, so one Supplier can legitimately appear in multiple roles.
 
 `OPERATES_IN` currently means the company's primary SEC SIC classification, not an inferred list of every industry in which it participates. `BASED_IN` currently means the country derived from the SEC business address, not geographic revenue exposure. U.S. state codes are normalized to EDGAR code `X1` (United States), and Canadian province codes to `Z4` (Canada).
 
@@ -72,6 +74,8 @@ Portfolio structural breakdowns aggregate sourced `OWNS` weights and one-level `
 
 Filing evidence extraction downloads source documents only in a bounded explicit sync step. The current extractor is deterministic and conservative: it records strong supply-chain terms directly, while supplier/vendor and generic dependency terms require manufacturing/supply context in the same sentence before becoming `dependency_candidate` evidence. Evidence is provenance, not a trusted dependency edge, and no supplier identity, confidence score, theme, or numeric impact is inferred at this milestone.
 
-Semantic-candidate extraction is also bounded and best-effort. The graph/repository/service/provider contract exists independently of any LLM vendor. The optional Ollama implementation uses a local model with a constrained JSON schema and then deterministically rejects non-verbatim object mentions, non-verbatim supporting text, subject-company self references, and duplicates. When no semantic provider is configured or the local model is unavailable, unresolved evidence is left unmarked so it can be processed later. `RelationshipCandidate` remains an intermediate proposal until object-entity resolution and validation are completed. No `DEPENDS_ON` edge is created by this layer.
+Semantic-candidate extraction is also bounded and best-effort. The graph/repository/service/provider contract exists independently of any LLM vendor. The optional Ollama implementation uses a local model with a constrained JSON schema and then deterministically rejects non-verbatim object mentions, non-verbatim supporting text, subject-company self references, and duplicates. When no semantic provider is configured or the local model is unavailable, unresolved evidence is left unmarked so it can be processed later.
+
+Candidate-entity resolution is a separate deterministic step. It creates internal Supplier identities from exact object mentions, captures explicit filing aliases such as `Taiwan Semiconductor Manufacturing Company Limited, or TSMC`, and reuses exact aliases already stored in the graph. It does not collapse merely similar corporate names, assign CIK/LEI/ticker identifiers, or validate the proposed dependency itself. `RelationshipCandidate` therefore remains an intermediate proposal even after `RESOLVES_TO`; no `DEPENDS_ON` edge is created by this layer.
 
 Company resolution is deliberately best-effort. A provider failure or an unresolved ETF constituent does not block portfolio graph sync; the asset remains in the graph and the sync response reports its ticker in `unresolved_company_assets`. Company metadata enrichment is also best-effort and runs in bounded batches so a large ETF does not cause hundreds of SEC requests in a single synchronous operation. Successfully enriched companies are marked with `sec_metadata_synced_at` and the SEC source URL so the shared graph can reuse the metadata across portfolios.

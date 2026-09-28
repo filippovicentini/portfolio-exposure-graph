@@ -5,6 +5,8 @@ from uuid import UUID
 
 from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
+    CandidateEntityResolution,
+    CandidateEntityResolutionSyncResult,
     CompanyFilings,
     CompanyFilingsSyncResult,
     CompanyMetadata,
@@ -17,6 +19,7 @@ from app.domain.models import (
     GraphSyncResult,
     PortfolioExposurePaths,
     PortfolioStructuralExposure,
+    SupplierIdentity,
 )
 from app.providers.base import (
     AssetDataProvider,
@@ -28,6 +31,7 @@ from app.providers.base import (
 )
 from app.repositories.graph_repository import GraphRepository
 from app.repositories.portfolio_repository import PortfolioRepository
+from app.services.candidate_entity_resolver import DeterministicCandidateEntityResolver
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +49,7 @@ class GraphService:
         company_filings_provider: CompanyFilingsProvider,
         filing_evidence_provider: FilingEvidenceProvider,
         semantic_candidate_provider: EvidenceSemanticCandidateProvider | None = None,
+        candidate_entity_resolver: DeterministicCandidateEntityResolver | None = None,
     ) -> None:
         self.portfolio_repository = portfolio_repository
         self.graph_repository = graph_repository
@@ -54,6 +59,9 @@ class GraphService:
         self.company_filings_provider = company_filings_provider
         self.filing_evidence_provider = filing_evidence_provider
         self.semantic_candidate_provider = semantic_candidate_provider
+        self.candidate_entity_resolver = (
+            candidate_entity_resolver or DeterministicCandidateEntityResolver()
+        )
 
     def sync(self, portfolio_id: UUID) -> GraphSyncResult | None:
         portfolio = self.portfolio_repository.get(portfolio_id)
@@ -333,6 +341,103 @@ class GraphService:
                 if not batch.candidates
             ),
             unresolved_evidence_ids=sorted(set(unresolved)),
+        )
+
+    def sync_candidate_entity_resolutions(
+        self,
+        portfolio_id: UUID,
+        candidate_limit: int = 25,
+    ) -> CandidateEntityResolutionSyncResult | None:
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+
+        targets = self.graph_repository.get_candidate_entity_resolution_targets(
+            portfolio_id,
+            limit=candidate_limit,
+        )
+        resolutions: list[CandidateEntityResolution] = []
+        unresolved: list[str] = []
+        suppliers_by_alias: dict[str, SupplierIdentity] = {}
+
+        for target in targets:
+            try:
+                proposed = self.candidate_entity_resolver.resolve(target)
+                supplier = self._reuse_supplier_identity(
+                    proposed,
+                    suppliers_by_alias,
+                )
+            except Exception:
+                logger.exception(
+                    "Candidate entity resolution failed for candidate %s",
+                    target.candidate_id,
+                )
+                unresolved.append(target.candidate_id)
+                continue
+
+            resolutions.append(
+                CandidateEntityResolution(
+                    candidate_id=target.candidate_id,
+                    supplier=supplier,
+                    resolution_method=self.candidate_entity_resolver.RESOLUTION_METHOD,
+                )
+            )
+            for alias in supplier.aliases:
+                suppliers_by_alias[
+                    self.candidate_entity_resolver.normalize_alias(alias)
+                ] = supplier
+
+        self.graph_repository.sync_candidate_entity_resolutions(resolutions)
+
+        return CandidateEntityResolutionSyncResult(
+            portfolio_id=portfolio_id,
+            candidates_requested=len(targets),
+            candidates_resolved=len(resolutions),
+            suppliers_synced=len(
+                {resolution.supplier.supplier_id for resolution in resolutions}
+            ),
+            unresolved_candidate_ids=sorted(set(unresolved)),
+        )
+
+    def _reuse_supplier_identity(
+        self,
+        proposed: SupplierIdentity,
+        suppliers_by_alias: dict[str, SupplierIdentity],
+    ) -> SupplierIdentity:
+        matched: SupplierIdentity | None = None
+
+        for alias in proposed.aliases:
+            normalized = self.candidate_entity_resolver.normalize_alias(alias)
+            batch_match = suppliers_by_alias.get(normalized)
+            repository_match = self.graph_repository.get_supplier_by_alias(alias)
+
+            for candidate in (batch_match, repository_match):
+                if candidate is None:
+                    continue
+                if matched is not None and candidate.supplier_id != matched.supplier_id:
+                    raise ValueError(
+                        f"Conflicting supplier identities for alias {alias!r}"
+                    )
+                matched = candidate
+
+        if matched is None:
+            return proposed
+
+        aliases = list(matched.aliases)
+        seen = {
+            self.candidate_entity_resolver.normalize_alias(alias)
+            for alias in aliases
+        }
+        for alias in proposed.aliases:
+            normalized = self.candidate_entity_resolver.normalize_alias(alias)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            aliases.append(alias)
+
+        return SupplierIdentity(
+            supplier_id=matched.supplier_id,
+            canonical_name=matched.canonical_name,
+            aliases=aliases,
         )
 
     def get_paths(self, portfolio_id: UUID) -> PortfolioExposurePaths | None:

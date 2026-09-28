@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.dependencies import graph_service, lookthrough_service, portfolio_service
 from app.domain.models import (
+    CandidateEntityResolutionSyncResult,
     CompanyFilingsSyncResult,
     CompanyMetadataSyncResult,
     EvidenceSemanticCandidatesSyncResult,
@@ -113,6 +114,23 @@ def sync_portfolio_evidence_semantic_candidates(
         portfolio_id,
         evidence_limit=evidence_limit,
         candidates_per_evidence=candidates_per_evidence,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/candidate-entities/sync",
+    response_model=CandidateEntityResolutionSyncResult,
+)
+def sync_portfolio_candidate_entities(
+    portfolio_id: UUID,
+    candidate_limit: int = Query(default=25, ge=1, le=100),
+) -> CandidateEntityResolutionSyncResult:
+    result = graph_service.sync_candidate_entity_resolutions(
+        portfolio_id,
+        candidate_limit=candidate_limit,
     )
     if result is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")

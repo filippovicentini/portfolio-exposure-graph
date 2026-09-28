@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from uuid import UUID
 
 from app.domain.models import (
+    CandidateEntityResolution,
+    CandidateEntityResolutionTarget,
     CompanyFilingTarget,
     CompanyFilings,
     CompanyMetadata,
@@ -18,6 +20,7 @@ from app.domain.models import (
     FilingEvidenceTarget,
     Portfolio,
     StructuralExposureItem,
+    SupplierIdentity,
 )
 
 
@@ -94,6 +97,25 @@ class GraphRepository(ABC):
     def sync_evidence_semantic_candidates(
         self,
         candidate_batches: Mapping[str, EvidenceSemanticCandidateBatch],
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_candidate_entity_resolution_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[CandidateEntityResolutionTarget]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_supplier_by_alias(self, alias: str) -> SupplierIdentity | None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def sync_candidate_entity_resolutions(
+        self,
+        resolutions: list[CandidateEntityResolution],
     ) -> None:
         raise NotImplementedError
 

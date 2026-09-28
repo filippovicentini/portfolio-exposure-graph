@@ -28,12 +28,14 @@ Implemented:
 - deterministic candidate-entity resolution into internal canonical `Supplier` identities with evidence-derived aliases
 - deterministic promotion of fully resolved, source-verifiable candidates into qualitative `Company -> DEPENDS_ON -> Supplier` edges with graph-linked provenance
 - bounded portfolio dependency-path API with direct/ETF routes and source-level provenance
+- local web UI for creating/syncing portfolios and inspecting Supplier dependency paths with expandable SEC provenance
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
 - enrich internal Supplier identities with external identifiers where defensible
-- small frontend consuming dependency paths and provenance
+- improve local setup and portfolio persistence
+- add richer dependency aggregation and filtering as the graph grows
 
 Out of scope for the MVP: price prediction, trading recommendations, portfolio optimization, broker integration, and real-time market data.
 
@@ -105,6 +107,8 @@ docker compose up -d neo4j
 cd backend
 uvicorn app.main:app --reload
 ```
+
+Open the local web UI at `http://127.0.0.1:8000/`. The UI can create and graph-sync a portfolio, load promoted Supplier dependency paths, filter them by role/search text, and expand source-level SEC provenance. It also exposes an optional bounded dependency-enrichment pipeline; semantic extraction in that flow requires `SEMANTIC_PROVIDER=ollama`.
 
 Open API docs at `http://127.0.0.1:8000/docs`.
 

@@ -5,9 +5,11 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
-from app.domain.enums import AssetStatus
 from app.domain.models import Portfolio
-from app.repositories.portfolio_repository import PortfolioRepository
+from app.repositories.portfolio_repository import (
+    UNRESOLVED_ASSET_STATUSES,
+    PortfolioRepository,
+)
 from app.repositories.postgres_schema import PostgresConnectionFactory
 
 _SCHEMA_SQL = """
@@ -89,16 +91,15 @@ class PostgresPortfolioRepository(PortfolioRepository):
             ).fetchall()
         return [Portfolio.model_validate(row[0]) for row in rows]
 
-    def find_with_pending_ticker(self, ticker: str) -> list[Portfolio]:
-        match = [
-            {
-                "ticker": ticker,
-                "asset": {"status": AssetStatus.PENDING_ENRICHMENT.value},
-            }
+    def find_with_unresolved_ticker(self, ticker: str) -> list[Portfolio]:
+        matches = [
+            Jsonb([{"ticker": ticker, "asset": {"status": status.value}}])
+            for status in UNRESOLVED_ASSET_STATUSES
         ]
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT document FROM portfolios WHERE document -> 'positions' @> %s",
-                (Jsonb(match),),
+                "SELECT document FROM portfolios "
+                "WHERE document -> 'positions' @> ANY(%s::jsonb[])",
+                (matches,),
             ).fetchall()
         return [Portfolio.model_validate(row[0]) for row in rows]

@@ -30,6 +30,14 @@ class AssetResolver:
             )
 
         existing = self.registry.get(normalized)
+        if existing and existing.status == AssetStatus.UNSUPPORTED:
+            # The registry can be persistent, and a ticker no provider knew
+            # before may be listed now. Mark it pending again so the caller
+            # queues an enrichment job; the job retries the providers and
+            # updates every portfolio holding the ticker unresolved.
+            return self.registry.save(
+                existing.model_copy(update={"status": AssetStatus.PENDING_ENRICHMENT})
+            )
         if existing:
             return existing
 

@@ -10,7 +10,10 @@ from app.domain.models import (
     EnrichmentProcessResult,
     Portfolio,
 )
-from app.repositories.portfolio_repository import PortfolioRepository
+from app.repositories.portfolio_repository import (
+    UNRESOLVED_ASSET_STATUSES,
+    PortfolioRepository,
+)
 from app.services.asset_resolver import AssetResolver
 from app.services.enrichment_queue import DEFAULT_LEASE_SECONDS, EnrichmentQueue
 
@@ -28,7 +31,8 @@ class EnrichmentService:
     Each claimed job retries the asset providers for its ticker. Outcomes:
 
     - resolved: the job is COMPLETED, the asset registry is updated and every
-      portfolio holding the ticker as PENDING_ENRICHMENT gets the resolved asset.
+      portfolio holding the ticker unresolved (PENDING_ENRICHMENT, or
+      UNSUPPORTED from an earlier failed job) gets the resolved asset.
     - not recognised by any provider, or a provider error: the job goes back to
       QUEUED until ``max_attempts`` is reached, then it is FAILED. A requeued
       job is not claimable before ``next_attempt_at``: the delay starts at
@@ -167,12 +171,14 @@ class EnrichmentService:
         self, job: EnrichmentJob, asset: AssetResolution | None
     ) -> list[Portfolio]:
         updated = []
-        for portfolio in self.portfolio_repository.find_with_pending_ticker(job.ticker):
+        for portfolio in self.portfolio_repository.find_with_unresolved_ticker(
+            job.ticker
+        ):
             positions = [
                 position.model_copy(update={"asset": asset})
                 if asset is not None
                 and position.ticker == job.ticker
-                and position.asset.status == AssetStatus.PENDING_ENRICHMENT
+                and position.asset.status in UNRESOLVED_ASSET_STATUSES
                 else position
                 for position in portfolio.positions
             ]

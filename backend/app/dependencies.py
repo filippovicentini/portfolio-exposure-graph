@@ -7,7 +7,7 @@ from app.providers.sec_asset_provider import SecAssetProvider
 from app.providers.sec_company_metadata_provider import SecCompanyMetadataProvider
 from app.providers.sec_filing_evidence_provider import SecFilingEvidenceProvider
 from app.providers.sec_filings_provider import SecFilingsProvider
-from app.repositories.asset_registry import InMemoryAssetRegistry
+from app.repositories.asset_registry import AssetRegistry, InMemoryAssetRegistry
 from app.repositories.neo4j_graph_repository import Neo4jGraphRepository
 from app.repositories.portfolio_repository import (
     InMemoryPortfolioRepository,
@@ -20,7 +20,6 @@ from app.services.graph_service import GraphService
 from app.services.lookthrough_service import LookthroughService
 from app.services.portfolio_service import PortfolioService
 
-asset_registry = InMemoryAssetRegistry()
 
 
 def _validated_store() -> str:
@@ -43,6 +42,14 @@ def build_portfolio_repository() -> PortfolioRepository:
     return InMemoryPortfolioRepository()
 
 
+def build_asset_registry() -> AssetRegistry:
+    if _validated_store() == "postgres":
+        from app.repositories.postgres_asset_registry import PostgresAssetRegistry
+
+        return PostgresAssetRegistry(dsn=settings.database_url)
+    return InMemoryAssetRegistry()
+
+
 def build_enrichment_queue() -> EnrichmentQueue:
     if _validated_store() == "postgres":
         from app.repositories.postgres_enrichment_queue import (
@@ -53,6 +60,7 @@ def build_enrichment_queue() -> EnrichmentQueue:
     return InMemoryEnrichmentQueue()
 
 
+asset_registry = build_asset_registry()
 portfolio_repository = build_portfolio_repository()
 enrichment_queue = build_enrichment_queue()
 sec_asset_provider = SecAssetProvider(user_agent=settings.sec_user_agent)

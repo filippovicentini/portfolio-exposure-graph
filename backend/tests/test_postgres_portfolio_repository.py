@@ -109,20 +109,28 @@ def test_portfolios_survive_a_new_repository_instance(repository):
     assert reopened.get(portfolio.portfolio_id) == portfolio
 
 
-def test_find_with_pending_ticker_matches_only_pending_positions(repository):
-    pending = _portfolio("Pending ASML")
-    resolved = _portfolio("Resolved ASML")
-    resolved.positions[1] = resolved.positions[1].model_copy(
-        update={
-            "asset": resolved.positions[1].asset.model_copy(
-                update={"status": AssetStatus.READY}
-            )
-        }
+def _with_asml_status(portfolio: Portfolio, status: AssetStatus) -> Portfolio:
+    positions = list(portfolio.positions)
+    positions[1] = positions[1].model_copy(
+        update={"asset": positions[1].asset.model_copy(update={"status": status})}
     )
-    repository.save(pending)
-    repository.save(resolved)
+    return portfolio.model_copy(update={"positions": positions})
 
-    found = repository.find_with_pending_ticker("ASML")
 
-    assert [portfolio.name for portfolio in found] == ["Pending ASML"]
-    assert repository.find_with_pending_ticker("NVDA") == []
+def test_find_with_unresolved_ticker_matches_pending_and_unsupported(repository):
+    pending = _portfolio("Pending ASML")
+    unsupported = _with_asml_status(
+        _portfolio("Unsupported ASML"), AssetStatus.UNSUPPORTED
+    )
+    resolved = _with_asml_status(_portfolio("Resolved ASML"), AssetStatus.READY)
+    for portfolio in (pending, unsupported, resolved):
+        repository.save(portfolio)
+
+    found = repository.find_with_unresolved_ticker("ASML")
+
+    assert sorted(portfolio.name for portfolio in found) == [
+        "Pending ASML",
+        "Unsupported ASML",
+    ]
+    # NVDA is READY in every portfolio.
+    assert repository.find_with_unresolved_ticker("NVDA") == []

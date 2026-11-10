@@ -16,31 +16,36 @@ class AssetRegistry(ABC):
         raise NotImplementedError
 
 
-class InMemoryAssetRegistry(AssetRegistry):
-    """Temporary in-memory registry for resolved assets.
+def default_seed_assets() -> list[AssetResolution]:
+    """Development-convenience equity seeds.
 
-    The remaining equity seeds are development conveniences only. ETFs are
-    deliberately not hardcoded: they must be resolved dynamically by a provider.
+    They let the app resolve a couple of well-known equities without provider
+    credentials. ETFs are deliberately not seeded: they must be resolved
+    dynamically by a provider.
     """
+    return [
+        AssetResolution(
+            ticker="NVDA",
+            exchange="NASDAQ",
+            asset_type=AssetType.EQUITY,
+            status=AssetStatus.READY,
+            company_name="NVIDIA Corporation",
+        ),
+        AssetResolution(
+            ticker="MSFT",
+            exchange="NASDAQ",
+            asset_type=AssetType.EQUITY,
+            status=AssetStatus.READY,
+            company_name="Microsoft Corporation",
+        ),
+    ]
+
+
+class InMemoryAssetRegistry(AssetRegistry):
+    """In-memory registry for resolved assets, starting from the dev seeds."""
 
     def __init__(self) -> None:
-        seed = [
-            AssetResolution(
-                ticker="NVDA",
-                exchange="NASDAQ",
-                asset_type=AssetType.EQUITY,
-                status=AssetStatus.READY,
-                company_name="NVIDIA Corporation",
-            ),
-            AssetResolution(
-                ticker="MSFT",
-                exchange="NASDAQ",
-                asset_type=AssetType.EQUITY,
-                status=AssetStatus.READY,
-                company_name="Microsoft Corporation",
-            ),
-        ]
-        self._assets = {asset.ticker: asset for asset in seed}
+        self._assets = {asset.ticker: asset for asset in default_seed_assets()}
 
     def get(self, ticker: str) -> AssetResolution | None:
         return self._assets.get(ticker.upper())

@@ -6,7 +6,7 @@
 
 **What am I actually exposed to, and through which paths?**
 
-A list of holdings hides most of a portfolio's real exposure: ETF look-through, the industries and countries behind each company, and the suppliers those companies depend on. Portfolio Exposure Graph builds that picture as a knowledge graph from primary sources, mainly SEC EDGAR filings. Every edge it shows can be traced back to the document it came from.
+A list of holdings hides most of a portfolio's real exposure: ETF look-through (US ETFs and European UCITS ETFs such as iShares Core MSCI World), the industries and countries behind each company, and the suppliers those companies depend on. Portfolio Exposure Graph builds that picture as a knowledge graph from primary sources, mainly SEC EDGAR filings. Every edge it shows can be traced back to the document it came from.
 
 > **Not investment advice.** This project is a research and engineering showcase. Its output describes sourced structural exposures; it is not financial, investment, legal or tax advice, and it must not be relied on to make investment decisions. Data comes from third-party sources (SEC EDGAR, Alpha Vantage) and may be incomplete, delayed or wrong.
 
@@ -81,6 +81,8 @@ A hallucinated supplier or quote is rejected rather than stored. How well this w
 A provider outage is never recorded as "this ticker does not exist".
 
 ## Quickstart
+
+The look-through by country, sector and underlying holding works with Python alone. The graph features (SEC company data, filings, supplier dependencies) need Neo4j.
 
 Requires Python 3.11+ and Docker (for Neo4j). From a clone, `docker compose up -d neo4j` starts the same Neo4j (and `postgres` if needed).
 
@@ -160,8 +162,12 @@ Layout: `src/portfolio_exposure_graph/` (`providers/` for external data sources,
 
 ## Limitations
 
-- Look-through is one ETF level deep; ETF holdings come from Alpha Vantage.
-- Only US-listed instruments, via SEC ticker data.
+- Look-through is one ETF level deep.
+- ETFs:
+  - US ETFs use Alpha Vantage holdings.
+  - UCITS ETFs are supported when listed in [`data/ucits_etfs.json`](src/portfolio_exposure_graph/data/ucits_etfs.json): iShares and Xtrackers funds, read from the issuers' published holdings files.
+  - Vanguard UCITS ETFs are recognised but not yet expanded, since Vanguard publishes no stable holdings file.
+- Only US-listed companies reach the SEC graph (company data, filings, suppliers). Non-US constituents of UCITS ETFs count in the country and sector look-through with their issuer's classification, but are not linked to companies.
 - Dependency evidence comes from recent 10-K and 10-Q filings and keyword-selected excerpts, so suppliers a filing never names are invisible.
 - Suppliers that are not SEC registrants (e.g. Samsung, Hon Hai) are not linked to a company. Another identifier source, such as LEI, would be needed.
 - Weights are structural, not economic: no revenue share, impact or risk numbers are inferred.

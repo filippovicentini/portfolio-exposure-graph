@@ -43,6 +43,13 @@ const els = {
   metricSuppliers: document.querySelector("#metric-suppliers"),
   metricCompanies: document.querySelector("#metric-companies"),
   metricEvidence: document.querySelector("#metric-evidence"),
+  lookthroughCard: document.querySelector("#lookthrough-card"),
+  lookthroughSummary: document.querySelector("#lookthrough-summary"),
+  lookthroughClasses: document.querySelector("#lookthrough-classes"),
+  lookthroughCountries: document.querySelector("#lookthrough-countries"),
+  lookthroughSectors: document.querySelector("#lookthrough-sectors"),
+  lookthroughHoldings: document.querySelector("#lookthrough-holdings"),
+  lookthroughNote: document.querySelector("#lookthrough-note"),
   exposureCard: document.querySelector("#exposure-card"),
   exposureSummary: document.querySelector("#exposure-summary"),
   roleExposure: document.querySelector("#role-exposure"),
@@ -288,6 +295,7 @@ async function processEnrichmentQueue() {
     }
 
     const portfolio = await loadPortfolioDetails(id);
+    loadLookthrough(id);
     const newlyReady = (portfolio?.positions || [])
       .filter((position) => position.asset.status === "ready" && !before.has(position.ticker));
     if (newlyReady.length) {
@@ -314,6 +322,7 @@ async function openPortfolio(portfolioId) {
     return;
   }
   addLog(`Opened “${portfolio.name}”.`, "success");
+  loadLookthrough(portfolioId);
   await loadDependencyPaths(portfolioId);
 }
 
@@ -349,8 +358,12 @@ function replacePositions(items) {
 function updateWeightTotal() {
   const total = [...els.positions.querySelectorAll(".weight-input")]
     .reduce((sum, input) => sum + (Number(input.value) || 0), 0);
-  els.weightTotal.textContent = `${total.toFixed(2)}%`;
-  els.weightTotal.classList.toggle("invalid", Math.abs(total - 100) > 0.01);
+  const rest = 100 - total;
+  els.weightTotal.textContent = rest > 0.01
+    ? `${total.toFixed(2)}% · ${rest.toFixed(2)}% not analysed`
+    : `${total.toFixed(2)}%`;
+  els.weightTotal.classList.toggle("invalid", total > 100.01);
+  els.weightTotal.classList.toggle("partial", rest > 0.01);
 }
 
 function equalizeWeights() {
@@ -393,8 +406,8 @@ function collectPortfolioPayload() {
   }
 
   const total = positions.reduce((sum, position) => sum + position.weight_pct, 0);
-  if (Math.abs(total - 100) > 0.01) {
-    throw new Error(`Portfolio weights must sum to 100%. Current total: ${total.toFixed(2)}%.`);
+  if (total > 100.01) {
+    throw new Error(`Portfolio weights must not exceed 100%. Current total: ${total.toFixed(2)}%.`);
   }
 
   return { name, positions };
@@ -421,6 +434,7 @@ async function createAndSyncPortfolio() {
     setActivePortfolio(portfolio.portfolio_id);
     state.portfolio = portfolio;
     renderHoldings();
+    loadLookthrough(portfolio.portfolio_id);
     addLog(`Portfolio created: ${portfolio.portfolio_id}`, "success");
     if (hasActiveEnrichment(portfolio)) {
       const pending = [...latestJobsByTicker(portfolio).keys()].join(", ");
@@ -610,6 +624,62 @@ function renderSupplierHolding(item) {
   return held > 0
     ? `<span class="supplier-held">Also held in the portfolio: ${escapeHtml(formatWeight(held))} · ${escapeHtml(listing)}</span>`
     : `<span class="supplier-listed">${escapeHtml(listing)} · not held</span>`;
+}
+
+async function loadLookthrough(portfolioId) {
+  els.lookthroughCard.hidden = false;
+  els.lookthroughSummary.textContent = "Loading ETF holdings from issuers…";
+  for (const el of [els.lookthroughClasses, els.lookthroughCountries, els.lookthroughSectors, els.lookthroughHoldings]) {
+    el.innerHTML = "";
+  }
+  els.lookthroughNote.textContent = "";
+  try {
+    const body = await requestJson(`${API_PREFIX}/portfolios/${portfolioId}/lookthrough`, { headers: {} });
+    if (portfolioId === state.portfolioId) renderLookthrough(body);
+  } catch (error) {
+    els.lookthroughSummary.textContent = `Look-through unavailable: ${error.message}`;
+  }
+}
+
+function barRows(items, scale, label = (item) => escapeHtml(item.name)) {
+  return items.map((item) => {
+    const muted = item.name === "Unclassified" || item.name === "ETF holdings not available";
+    const width = Math.max(1, (item.weight_pct / scale) * 100);
+    return `
+      <div class="bar-row${muted ? " muted" : ""}">
+        <span class="bar-row-name">${label(item)}</span>
+        <span class="bar-row-weight">${escapeHtml(formatWeight(item.weight_pct))}</span>
+        <span class="supplier-bar" aria-hidden="true"><span style="width: ${width.toFixed(1)}%"></span></span>
+      </div>`;
+  }).join("");
+}
+
+function renderLookthrough(body) {
+  const parts = [`${formatWeight(body.analysed_weight_pct)} of the portfolio analysed`];
+  if (body.not_analysed_weight_pct > 0.005) {
+    parts.push(`${formatWeight(body.not_analysed_weight_pct)} not included`);
+  }
+  if (body.unexpanded_etfs.length) {
+    parts.push(`holdings not available for ${body.unexpanded_etfs.join(", ")}`);
+  }
+  els.lookthroughSummary.textContent = `${parts.join(" · ")}.`;
+
+  els.lookthroughClasses.innerHTML = body.asset_classes.map((item) => `
+    <span class="role-chip plain">${escapeHtml(item.name)}<strong>${escapeHtml(formatWeight(item.weight_pct))}</strong></span>
+  `).join("");
+
+  const scale = Math.max(body.analysed_weight_pct, 1);
+  els.lookthroughCountries.innerHTML = barRows(body.countries.slice(0, 10), scale);
+  els.lookthroughSectors.innerHTML = barRows(body.sectors.slice(0, 10), scale);
+
+  const top = body.exposures.slice(0, 12);
+  const topScale = Math.max(...top.map((item) => item.total_weight_pct), 1);
+  els.lookthroughHoldings.innerHTML = barRows(
+    top.map((item) => ({ ...item, weight_pct: item.total_weight_pct })),
+    topScale,
+    (item) => `${escapeHtml(item.name || item.ticker)} <small>${escapeHtml([item.country, item.via_etfs.length ? `via ${item.via_etfs.join(", ")}` : "direct"].filter(Boolean).join(" · "))}</small>`,
+  );
+  els.lookthroughNote.textContent = `${body.classification_basis}.`;
 }
 
 function populateRoleFilter(paths) {

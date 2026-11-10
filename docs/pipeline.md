@@ -22,6 +22,38 @@ flowchart LR
     J --> L
 ```
 
+## UCITS ETFs
+
+European UCITS ETFs are recognised by ISIN or by any of their exchange
+tickers, from the registry in `src/portfolio_exposure_graph/data/ucits_etfs.json`
+(e.g. SWDA, IWDA and EUNL are all iShares Core MSCI World, IE00B4L5Y983).
+Holdings come from the file each issuer publishes:
+
+- **iShares:** `latest-holdings.csv` on the product page, with ticker, sector, location, exchange and weight.
+- **Xtrackers:** the constituent Excel export, with name, ISIN, country, industry and weight, but no tickers.
+
+Constituents located in the United States keep their ticker (`BRK B` becomes
+`BRK-B`) and go through the same SEC resolution and graph as any US equity.
+Other constituents get a listing-qualified identifier (`SU @ Euronext Paris`)
+or their ISIN, and are never resolved by ticker: local tickers collide with
+unrelated US ones ("SU" in Paris is Schneider Electric, "SU" in New York is
+Suncor). They still count in the look-through by country, sector and asset
+class, which uses the issuer's own classification, normalized across issuers
+("Korea, Republic of" and "Korea (South)" both become South Korea).
+
+Issuers round each weight. When the published weights of a fund add up to more
+than 100%, they are scaled down proportionally. When they add up to less, the
+rest stays unclassified rather than being redistributed.
+
+Portfolio weights may sum to less than 100%, for example to leave a bond ETF
+out of an equity analysis. The remainder is reported as not analysed, so every
+percentage stays a share of the real portfolio.
+
+Adding a fund means adding a registry entry. A new issuer needs a parser for
+its file. Vanguard funds are registered but report no holdings until a stable
+source exists, so they show up as "holdings not available" rather than being
+guessed.
+
 ## Steps
 
 Listed instruments remain `Asset` nodes because the same economic company can be represented by more than one security. When SEC ticker data provides a CIK, the graph creates one canonical `Company` node keyed by that CIK and links the asset with `REPRESENTS`. ETF constituents that cannot be resolved to a canonical company remain valid `Asset` nodes and are reported by graph sync.

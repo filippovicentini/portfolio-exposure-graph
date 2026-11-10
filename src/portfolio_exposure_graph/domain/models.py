@@ -47,9 +47,12 @@ class PortfolioCreate(BaseModel):
         if len(set(tickers)) != len(tickers):
             raise ValueError("Duplicate tickers are not allowed")
 
+        # Weights may sum to less than 100%: the remainder (e.g. bonds or cash
+        # left out of the analysis) is reported as not analysed, so every
+        # percentage stays a share of the real portfolio.
         total = sum(position.weight_pct for position in self.positions)
-        if abs(total - 100.0) > 0.01:
-            raise ValueError(f"Portfolio weights must sum to 100%; got {total:.2f}%")
+        if total > 100.0 + 0.01:
+            raise ValueError(f"Portfolio weights must not exceed 100%; got {total:.2f}%")
         return self
 
 
@@ -61,6 +64,7 @@ class AssetResolution(BaseModel):
     status: AssetStatus
     company_name: str | None = None
     cik: str | None = None
+    isin: str | None = None
 
 
 class PortfolioPosition(BaseModel):
@@ -106,9 +110,25 @@ class Portfolio(BaseModel):
 
 
 class EtfHolding(BaseModel):
-    ticker: str = Field(min_length=1, max_length=24)
+    """One constituent of an ETF.
+
+    ``ticker`` is the constituent's identifier within the look-through: its
+    US ticker when it is US-listed, otherwise a listing-qualified ticker or
+    its ISIN, so a local ticker never collides with an unrelated US one
+    ("SU" in Paris is Schneider Electric, "SU" in New York is Suncor).
+    """
+
+    ticker: str = Field(min_length=1, max_length=64)
     description: str | None = None
     weight_pct: float = Field(ge=0, le=100)
+    isin: str | None = None
+    country: str | None = None
+    sector: str | None = None
+    asset_class: str | None = None
+    exchange: str | None = None
+    # True: resolvable to an SEC company by ticker. False: never resolve by
+    # ticker. None: unknown (US-ETF data sources), resolved as before.
+    us_listed: bool | None = None
 
     @field_validator("ticker")
     @classmethod
@@ -148,12 +168,35 @@ class ExposureBreakdown(BaseModel):
     indirect_weight_pct: float
     total_weight_pct: float
     via_etfs: list[str] = Field(default_factory=list)
+    name: str | None = None
+    country: str | None = None
+    sector: str | None = None
+    asset_class: str | None = None
+
+
+class ClassificationBucket(BaseModel):
+    name: str
+    weight_pct: float = Field(ge=0)
 
 
 class PortfolioLookthrough(BaseModel):
     portfolio_id: UUID
     exposures: list[ExposureBreakdown]
     unexpanded_etfs: list[str] = Field(default_factory=list)
+    # Sum of the position weights, and the part of the portfolio left out.
+    analysed_weight_pct: float = 100.0
+    not_analysed_weight_pct: float = 0.0
+    # Look-through weight by the classification each ETF issuer publishes
+    # for its holdings, plus direct equities. "Unclassified" collects weight
+    # with no classification (e.g. direct equities, unexpanded ETFs).
+    countries: list[ClassificationBucket] = Field(default_factory=list)
+    sectors: list[ClassificationBucket] = Field(default_factory=list)
+    asset_classes: list[ClassificationBucket] = Field(default_factory=list)
+    classification_basis: str = (
+        "Country, sector and asset class as published by each ETF issuer for "
+        "its holdings (issuer-defined location and sector); weights are "
+        "position weight x holding weight"
+    )
 
 
 class ExposurePath(BaseModel):

@@ -25,6 +25,8 @@ dependencies = [
     "uvicorn[standard]>=0.34,<1",
     "httpx>=0.28,<1",
     "neo4j>=5.26,<6",
+    # Xtrackers publishes UCITS ETF holdings as Excel files.
+    "openpyxl>=3.1,<4",
 ]
 
 [project.optional-dependencies]
@@ -43,7 +45,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # The web UI is served from inside the package.
-portfolio_exposure_graph = ["web/*"]
+portfolio_exposure_graph = ["web/*", "data/*.json"]
 
 [tool.pytest.ini_options]
 # "." makes the tests package importable (tests import shared fakes from each other).

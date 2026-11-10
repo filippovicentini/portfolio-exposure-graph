@@ -116,7 +116,13 @@ class GraphService:
             if not positive_holdings:
                 unexpanded_etfs.append(ticker)
                 continue
-            etf_holdings[ticker] = positive_holdings
+            # Only holdings that can be resolved to an SEC company by ticker go
+            # into the graph; non-US constituents of UCITS ETFs (us_listed
+            # False) stay in the look-through classification only. An ETF
+            # with none (an emerging-markets fund) is expanded, not missing.
+            graph_holdings = [h for h in positive_holdings if h.us_listed is not False]
+            if graph_holdings:
+                etf_holdings[ticker] = graph_holdings
 
         company_tickers = {
             position.ticker.upper()

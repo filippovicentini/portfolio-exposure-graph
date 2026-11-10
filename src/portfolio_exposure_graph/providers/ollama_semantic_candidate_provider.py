@@ -15,7 +15,9 @@ from portfolio_exposure_graph.domain.models import (
 from portfolio_exposure_graph.providers.base import EvidenceSemanticCandidateProvider
 
 
-class _ExtractedCandidate(BaseModel):
+class ProposedCandidate(BaseModel):
+    """A candidate exactly as the model returned it, before validation."""
+
     model_config = ConfigDict(extra="forbid")
 
     object_mention: str = Field(min_length=1)
@@ -26,7 +28,7 @@ class _ExtractedCandidate(BaseModel):
 class _ExtractionResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    candidates: list[_ExtractedCandidate] = Field(default_factory=list)
+    candidates: list[ProposedCandidate] = Field(default_factory=list)
 
 
 class OllamaSemanticCandidateProvider(EvidenceSemanticCandidateProvider):
@@ -53,6 +55,27 @@ class OllamaSemanticCandidateProvider(EvidenceSemanticCandidateProvider):
         evidence: EvidenceSemanticTarget,
         limit: int,
     ) -> EvidenceSemanticCandidateBatch | None:
+        proposals = self.propose(evidence, limit)
+        if proposals is None:
+            return None
+        return EvidenceSemanticCandidateBatch(
+            evidence_id=evidence.evidence_id,
+            extraction_method=self.EXTRACTION_METHOD,
+            model_name=self.model_name,
+            candidates=self.validate(evidence, proposals, limit),
+        )
+
+    def propose(
+        self,
+        evidence: EvidenceSemanticTarget,
+        limit: int,
+    ) -> list[ProposedCandidate] | None:
+        """Ask the model for candidates; returns them unvalidated.
+
+        ``None`` means the model returned no content. Separate from
+        ``validate`` so the evaluation can measure the raw model output and
+        the effect of deterministic validation independently.
+        """
         if limit < 1:
             raise ValueError("limit must be at least 1")
 
@@ -82,14 +105,7 @@ class OllamaSemanticCandidateProvider(EvidenceSemanticCandidateProvider):
         if not isinstance(content, str) or not content.strip():
             return None
 
-        parsed = _ExtractionResponse.model_validate_json(content)
-        candidates = self._validated_candidates(evidence, parsed, limit)
-        return EvidenceSemanticCandidateBatch(
-            evidence_id=evidence.evidence_id,
-            extraction_method=self.EXTRACTION_METHOD,
-            model_name=self.model_name,
-            candidates=candidates,
-        )
+        return _ExtractionResponse.model_validate_json(content).candidates
 
     @staticmethod
     def _system_prompt() -> str:
@@ -118,16 +134,19 @@ class OllamaSemanticCandidateProvider(EvidenceSemanticCandidateProvider):
             "is supported by this evidence."
         )
 
-    def _validated_candidates(
+    def validate(
         self,
         evidence: EvidenceSemanticTarget,
-        parsed: _ExtractionResponse,
+        proposals: list[ProposedCandidate],
         limit: int,
     ) -> list[RelationshipCandidate]:
+        """Keep only proposals whose mention and supporting text are verbatim
+        spans of the evidence, whose mention lies inside its supporting text,
+        and that do not name the subject company itself."""
         validated: list[RelationshipCandidate] = []
         seen: set[tuple[str, CandidateRole]] = set()
 
-        for extracted in parsed.candidates:
+        for extracted in proposals:
             object_mention = self._source_span(
                 evidence.evidence_text,
                 extracted.object_mention,

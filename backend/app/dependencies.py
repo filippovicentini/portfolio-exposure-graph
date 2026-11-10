@@ -14,7 +14,8 @@ from app.repositories.portfolio_repository import (
     PortfolioRepository,
 )
 from app.services.asset_resolver import AssetResolver
-from app.services.enrichment_queue import InMemoryEnrichmentQueue
+from app.services.enrichment_queue import EnrichmentQueue, InMemoryEnrichmentQueue
+from app.services.enrichment_service import EnrichmentService
 from app.services.graph_service import GraphService
 from app.services.lookthrough_service import LookthroughService
 from app.services.portfolio_service import PortfolioService
@@ -22,23 +23,38 @@ from app.services.portfolio_service import PortfolioService
 asset_registry = InMemoryAssetRegistry()
 
 
+def _validated_store() -> str:
+    store = settings.portfolio_store or "memory"
+    if store not in ("memory", "postgres"):
+        raise ValueError(
+            f"Unsupported PORTFOLIO_STORE={settings.portfolio_store!r}; "
+            "expected 'memory' or 'postgres'"
+        )
+    return store
+
+
 def build_portfolio_repository() -> PortfolioRepository:
-    if settings.portfolio_store == "postgres":
+    if _validated_store() == "postgres":
         from app.repositories.postgres_portfolio_repository import (
             PostgresPortfolioRepository,
         )
 
         return PostgresPortfolioRepository(dsn=settings.database_url)
-    if settings.portfolio_store not in ("", "memory"):
-        raise ValueError(
-            f"Unsupported PORTFOLIO_STORE={settings.portfolio_store!r}; "
-            "expected 'memory' or 'postgres'"
-        )
     return InMemoryPortfolioRepository()
 
 
+def build_enrichment_queue() -> EnrichmentQueue:
+    if _validated_store() == "postgres":
+        from app.repositories.postgres_enrichment_queue import (
+            PostgresEnrichmentQueue,
+        )
+
+        return PostgresEnrichmentQueue(dsn=settings.database_url)
+    return InMemoryEnrichmentQueue()
+
+
 portfolio_repository = build_portfolio_repository()
-enrichment_queue = InMemoryEnrichmentQueue()
+enrichment_queue = build_enrichment_queue()
 sec_asset_provider = SecAssetProvider(user_agent=settings.sec_user_agent)
 sec_company_metadata_provider = SecCompanyMetadataProvider(
     user_agent=settings.sec_user_agent
@@ -85,4 +101,11 @@ graph_service = GraphService(
     company_filings_provider=sec_filings_provider,
     filing_evidence_provider=sec_filing_evidence_provider,
     semantic_candidate_provider=semantic_candidate_provider,
+)
+
+enrichment_service = EnrichmentService(
+    queue=enrichment_queue,
+    asset_resolver=asset_resolver,
+    portfolio_repository=portfolio_repository,
+    max_attempts=settings.enrichment_max_attempts,
 )

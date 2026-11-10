@@ -2,11 +2,10 @@
 
 These run against a real database only when ``TEST_DATABASE_URL`` is set, e.g.
 ``TEST_DATABASE_URL=postgresql://peg:peg@localhost:5432/peg``. Otherwise they are
-skipped so the default suite needs no external services. Each run uses a
-dedicated schema that is dropped afterwards.
+skipped so the default suite needs no external services (see the
+``postgres_dsn`` fixture in ``conftest.py``).
 """
 
-import os
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -20,31 +19,14 @@ from app.domain.models import (
     PortfolioPosition,
 )
 
-TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
-
-pytestmark = pytest.mark.skipif(
-    not TEST_DATABASE_URL, reason="TEST_DATABASE_URL not set"
-)
-
 
 @pytest.fixture
-def repository():
-    import psycopg
-
+def repository(postgres_dsn):
     from app.repositories.postgres_portfolio_repository import (
         PostgresPortfolioRepository,
     )
 
-    schema = f"test_{uuid4().hex}"
-    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as connection:
-        connection.execute(f'CREATE SCHEMA "{schema}"')
-    separator = "&" if "?" in TEST_DATABASE_URL else "?"
-    dsn = f"{TEST_DATABASE_URL}{separator}options=-csearch_path%3D{schema}"
-
-    yield PostgresPortfolioRepository(dsn=dsn)
-
-    with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as connection:
-        connection.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    return PostgresPortfolioRepository(dsn=postgres_dsn)
 
 
 def _portfolio(name: str, created_at: datetime | None = None) -> Portfolio:
@@ -122,6 +104,25 @@ def test_portfolios_survive_a_new_repository_instance(repository):
     portfolio = _portfolio("Persistent")
     repository.save(portfolio)
 
-    reopened = PostgresPortfolioRepository(dsn=repository._dsn)
+    reopened = PostgresPortfolioRepository(dsn=repository.dsn)
 
     assert reopened.get(portfolio.portfolio_id) == portfolio
+
+
+def test_find_with_pending_ticker_matches_only_pending_positions(repository):
+    pending = _portfolio("Pending ASML")
+    resolved = _portfolio("Resolved ASML")
+    resolved.positions[1] = resolved.positions[1].model_copy(
+        update={
+            "asset": resolved.positions[1].asset.model_copy(
+                update={"status": AssetStatus.READY}
+            )
+        }
+    )
+    repository.save(pending)
+    repository.save(resolved)
+
+    found = repository.find_with_pending_ticker("ASML")
+
+    assert [portfolio.name for portfolio in found] == ["Pending ASML"]
+    assert repository.find_with_pending_ticker("NVDA") == []

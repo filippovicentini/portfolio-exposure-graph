@@ -17,6 +17,13 @@ class Settings(BaseModel):
     ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen3:4b-instruct")
     portfolio_store: str = os.getenv("PORTFOLIO_STORE", "memory").strip().lower()
+    enrichment_max_attempts: int = int(os.getenv("ENRICHMENT_MAX_ATTEMPTS", "3"))
+    enrichment_worker_interval_seconds: float = float(
+        os.getenv("ENRICHMENT_WORKER_INTERVAL_SECONDS", "0")
+    )
+    enrichment_worker_batch_size: int = int(
+        os.getenv("ENRICHMENT_WORKER_BATCH_SIZE", "10")
+    )
     database_url: str = os.getenv(
         "DATABASE_URL",
         f"postgresql://peg:peg@localhost:{os.getenv('POSTGRES_PORT', '5432')}/peg",

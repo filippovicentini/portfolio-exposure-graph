@@ -10,6 +10,7 @@ from app.domain.enums import (
     AssetType,
     CandidateRelationType,
     CandidateRole,
+    EnrichmentJobStatus,
     PortfolioStatus,
 )
 
@@ -56,11 +57,29 @@ class PortfolioPosition(BaseModel):
     asset: AssetResolution
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class EnrichmentJob(BaseModel):
     job_id: UUID = Field(default_factory=uuid4)
     ticker: str
-    status: str = "queued"
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    status: EnrichmentJobStatus = EnrichmentJobStatus.QUEUED
+    attempts: int = Field(default=0, ge=0)
+    last_error: str | None = None
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)
+    claimed_at: datetime | None = None
+    resolved_asset_type: AssetType | None = None
+
+
+class EnrichmentProcessResult(BaseModel):
+    jobs_claimed: int = Field(ge=0)
+    jobs_completed: int = Field(ge=0)
+    jobs_requeued: int = Field(ge=0)
+    jobs_failed: int = Field(ge=0)
+    portfolios_updated: int = Field(ge=0)
+    jobs: list[EnrichmentJob] = Field(default_factory=list)
 
 
 class Portfolio(BaseModel):

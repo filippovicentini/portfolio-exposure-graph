@@ -14,6 +14,13 @@ class AssetStatus(str, Enum):
     INVALID = "invalid"
 
 
+class EnrichmentJobStatus(str, Enum):
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class PortfolioStatus(str, Enum):
     READY = "ready"
     PARTIALLY_READY = "partially_ready"

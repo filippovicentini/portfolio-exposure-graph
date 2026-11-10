@@ -5,8 +5,10 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
+from app.domain.enums import AssetStatus
 from app.domain.models import Portfolio
 from app.repositories.portfolio_repository import PortfolioRepository
+from app.repositories.postgres_schema import PostgresConnectionFactory
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS portfolios (
@@ -18,6 +20,8 @@ CREATE TABLE IF NOT EXISTS portfolios (
 );
 CREATE INDEX IF NOT EXISTS portfolios_created_at_idx
     ON portfolios (created_at DESC);
+CREATE INDEX IF NOT EXISTS portfolios_positions_idx
+    ON portfolios USING GIN ((document -> 'positions') jsonb_path_ops);
 """
 
 
@@ -36,16 +40,14 @@ class PostgresPortfolioRepository(PortfolioRepository):
     """
 
     def __init__(self, dsn: str) -> None:
-        self._dsn = dsn
-        self._schema_ready = False
+        self._connections = PostgresConnectionFactory(dsn, _SCHEMA_SQL)
+
+    @property
+    def dsn(self) -> str:
+        return self._connections.dsn
 
     def _connect(self) -> psycopg.Connection:
-        connection = psycopg.connect(self._dsn)
-        if not self._schema_ready:
-            with connection.transaction():
-                connection.execute(_SCHEMA_SQL)
-            self._schema_ready = True
-        return connection
+        return self._connections.connect()
 
     def save(self, portfolio: Portfolio) -> Portfolio:
         with self._connect() as connection:
@@ -84,5 +86,19 @@ class PostgresPortfolioRepository(PortfolioRepository):
             rows = connection.execute(
                 "SELECT document FROM portfolios ORDER BY created_at DESC LIMIT %s",
                 (limit,),
+            ).fetchall()
+        return [Portfolio.model_validate(row[0]) for row in rows]
+
+    def find_with_pending_ticker(self, ticker: str) -> list[Portfolio]:
+        match = [
+            {
+                "ticker": ticker,
+                "asset": {"status": AssetStatus.PENDING_ENRICHMENT.value},
+            }
+        ]
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT document FROM portfolios WHERE document -> 'positions' @> %s",
+                (Jsonb(match),),
             ).fetchall()
         return [Portfolio.model_validate(row[0]) for row in rows]

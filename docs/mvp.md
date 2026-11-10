@@ -16,7 +16,7 @@
 12. Store evidence/provenance for document-derived edges.
 13. Return bounded exposure and supplier-dependency paths explaining why a portfolio is connected to an entity, including source provenance for promoted dependencies.
 14. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.
-15. Optionally persist portfolios in PostgreSQL so they survive server restarts.
+15. Optionally persist portfolios and enrichment jobs in PostgreSQL so they survive server restarts.
 16. Provide a small interactive local web UI for portfolio creation, graph sync, dependency-path inspection, filtering, and source-provenance expansion.
 
 ## Explicitly out of scope
@@ -37,8 +37,8 @@ An unseen ticker does not block portfolio creation.
 
 `known -> READY`
 
-`unseen but syntactically valid -> PENDING_ENRICHMENT -> queued job`
+`unseen but syntactically valid -> PENDING_ENRICHMENT -> queued job -> READY | UNSUPPORTED`
 
 `invalid -> INVALID`
 
-Provider-backed equity and ETF resolution are implemented. Remaining unresolved assets stay non-blocking and can be enriched later.
+Provider-backed equity and ETF resolution are implemented. Remaining unresolved assets stay non-blocking. Queued jobs are processed on demand or by an opt-in background worker, which retries the providers and updates every portfolio holding the ticker; a ticker is marked `UNSUPPORTED` only when every provider answered and none recognised it.

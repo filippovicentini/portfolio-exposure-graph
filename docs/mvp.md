@@ -39,6 +39,6 @@ An unseen ticker does not block portfolio creation.
 
 `unseen but syntactically valid -> PENDING_ENRICHMENT -> queued job -> READY | UNSUPPORTED`
 
-`invalid -> INVALID`
+`syntactically invalid -> rejected with 422 (portfolio not created)`
 
 Provider-backed equity and ETF resolution are implemented. Remaining unresolved assets stay non-blocking. Queued jobs are processed on demand or by an opt-in background worker, which retries the providers and updates every portfolio holding the ticker; a ticker is marked `UNSUPPORTED` only when every provider answered and none recognised it.

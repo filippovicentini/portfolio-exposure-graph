@@ -1,4 +1,6 @@
 const API_PREFIX = "/api/v1";
+// Mirrors TICKER_PATTERN in app/domain/models.py.
+const TICKER_PATTERN = /^[A-Z][A-Z0-9.\-]{0,23}$/;
 
 const state = {
   portfolioId: null,
@@ -115,6 +117,10 @@ async function requestJson(url, options = {}) {
 
   if (!response.ok) {
     const detail = body?.detail || body || `HTTP ${response.status}`;
+    if (Array.isArray(detail)) {
+      // FastAPI validation errors: [{loc, msg, ...}, ...]
+      throw new Error(detail.map((item) => String(item?.msg || JSON.stringify(item)).replace(/^Value error, /, "")).join(" "));
+    }
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
 
@@ -359,6 +365,10 @@ function collectPortfolioPayload() {
 
   if (positions.some((position) => !position.ticker)) {
     throw new Error("Every position needs a ticker.");
+  }
+  const invalid = positions.filter((position) => !TICKER_PATTERN.test(position.ticker));
+  if (invalid.length) {
+    throw new Error(`Invalid ticker${invalid.length === 1 ? "" : "s"}: ${invalid.map((position) => position.ticker).join(", ")}. Use a letter followed by letters, digits, "." or "-".`);
   }
   if (positions.some((position) => !Number.isFinite(position.weight_pct) || position.weight_pct <= 0)) {
     throw new Error("Every position needs a positive weight.");

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timezone
 from uuid import UUID, uuid4
 
@@ -15,6 +16,10 @@ from app.domain.enums import (
 )
 
 
+# US-listed ticker syntax: a letter, then letters, digits, "." or "-".
+TICKER_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]{0,23}$")
+
+
 class PositionInput(BaseModel):
     ticker: str = Field(min_length=1, max_length=24)
     weight_pct: float = Field(gt=0, le=100)
@@ -22,7 +27,13 @@ class PositionInput(BaseModel):
     @field_validator("ticker")
     @classmethod
     def normalize_ticker(cls, value: str) -> str:
-        return value.strip().upper()
+        normalized = value.strip().upper()
+        if not TICKER_PATTERN.fullmatch(normalized):
+            raise ValueError(
+                f"Invalid ticker {normalized!r}: expected a letter followed by "
+                "letters, digits, '.' or '-'"
+            )
+        return normalized
 
 
 class PortfolioCreate(BaseModel):

@@ -28,6 +28,7 @@ from app.domain.models import (
     FilingEvidenceTarget,
     Portfolio,
     StructuralExposureItem,
+    SupplierCompanyLink,
     SupplierIdentity,
 )
 from app.repositories.graph_repository import GraphRepository
@@ -536,13 +537,62 @@ class Neo4jGraphRepository(GraphRepository):
               -[:RESOLVES_TO]->(supplier)
         WHERE candidate.candidate_id IN coalesce(dependency.candidate_ids, [])
     }
+    OPTIONAL MATCH (supplier)-[:IDENTIFIED_AS]->(supplier_company:Company)
     RETURN asset_path,
            company.cik AS company_cik,
            company.name AS company_name,
            supplier.supplier_id AS supplier_id,
            supplier.canonical_name AS supplier_name,
            dependency.roles AS roles,
-           company_path_weight_pct
+           company_path_weight_pct,
+           supplier_company.cik AS supplier_company_cik,
+           supplier_company.name AS supplier_company_name
+    """
+
+    SUPPLIER_COMPANY_LINK_TARGETS_QUERY = """
+    MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[:OWNS|HOLDS*1..2]->(:Asset)
+          -[:REPRESENTS]->(:Company)-[:DEPENDS_ON]->(supplier:Supplier)
+    WHERE NOT ('company_link_checked_at' IN keys(supplier))
+    WITH DISTINCT supplier
+    RETURN supplier.supplier_id AS supplier_id,
+           supplier.canonical_name AS canonical_name,
+           coalesce(supplier.aliases, [supplier.canonical_name]) AS aliases
+    ORDER BY canonical_name ASC
+    LIMIT $limit
+    """
+
+    SYNC_SUPPLIER_COMPANY_LINKS_QUERY = """
+    UNWIND $links AS item
+    MATCH (supplier:Supplier {supplier_id: item.supplier_id})
+    SET supplier.company_link_checked_at = datetime(),
+        supplier.company_link_status = item.status,
+        supplier.company_link_method = item.method,
+        supplier.company_link_candidate_ciks = item.candidate_ciks
+    WITH supplier, item
+    OPTIONAL MATCH (supplier)-[stale:IDENTIFIED_AS]->(:Company)
+    DELETE stale
+    WITH DISTINCT supplier, item
+    WHERE item.company_cik IS NOT NULL
+    MERGE (company:Company {cik: item.company_cik})
+    ON CREATE SET company.name = item.company_name,
+                  company.updated_at = datetime()
+    MERGE (supplier)-[link:IDENTIFIED_AS]->(company)
+    SET link.method = item.method,
+        link.matched_name = item.matched_name,
+        link.registrant_name = item.company_name,
+        link.source_url = item.source_url,
+        link.updated_at = datetime()
+    """
+
+    COMPANY_HOLDING_WEIGHTS_QUERY = """
+    CALL () {
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(asset:Asset)-[:REPRESENTS]->(company:Company)
+        RETURN company, owns.weight_pct AS effective_weight_pct
+        UNION ALL
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(etf:Asset:ETF)-[holds:HOLDS]->(asset:Asset)-[:REPRESENTS]->(company:Company)
+        RETURN company, owns.weight_pct * holds.weight_pct / 100.0 AS effective_weight_pct
+    }
+    RETURN company.cik AS cik, sum(effective_weight_pct) AS weight_pct
     """
 
     INDUSTRY_EXPOSURES_QUERY = """
@@ -1154,9 +1204,48 @@ class Neo4jGraphRepository(GraphRepository):
                 supplier_name=str(record["supplier_name"]),
                 roles=[str(role) for role in record["roles"]],
                 company_path_weight_pct=float(record["company_path_weight_pct"]),
+                supplier_company_cik=record.get("supplier_company_cik"),
+                supplier_company_name=record.get("supplier_company_name"),
             )
             for record in records
         ]
+
+    def get_supplier_company_link_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[SupplierIdentity]:
+        records, _, _ = self.driver.execute_query(
+            self.SUPPLIER_COMPANY_LINK_TARGETS_QUERY,
+            portfolio_id=str(portfolio_id),
+            limit=limit,
+            database_=self.database,
+        )
+        return [
+            SupplierIdentity(
+                supplier_id=str(record["supplier_id"]),
+                canonical_name=str(record["canonical_name"]),
+                aliases=[str(alias) for alias in record["aliases"]],
+            )
+            for record in records
+        ]
+
+    def sync_supplier_company_links(self, links: list[SupplierCompanyLink]) -> None:
+        if not links:
+            return
+        self.driver.execute_query(
+            self.SYNC_SUPPLIER_COMPANY_LINKS_QUERY,
+            links=[link.model_dump(mode="json") for link in links],
+            database_=self.database,
+        )
+
+    def get_company_holding_weights(self, portfolio_id: UUID) -> dict[str, float]:
+        records, _, _ = self.driver.execute_query(
+            self.COMPANY_HOLDING_WEIGHTS_QUERY,
+            portfolio_id=str(portfolio_id),
+            database_=self.database,
+        )
+        return {str(record["cik"]): float(record["weight_pct"]) for record in records}
 
     def get_industry_exposures(
         self,

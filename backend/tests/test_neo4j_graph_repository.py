@@ -51,6 +51,8 @@ class FakeDriver:
         self.dependency_promotion_target_records = []
         self.dependency_path_records = []
         self.dependency_exposure_records = []
+        self.supplier_link_target_records = []
+        self.holding_weight_records = []
         self.supplier_alias_records = []
         self.industry_exposure_records = []
         self.country_exposure_records = []
@@ -61,6 +63,10 @@ class FakeDriver:
             return self.industry_exposure_records, SimpleNamespace(), []
         if "country.sec_code AS code" in query:
             return self.country_exposure_records, SimpleNamespace(), []
+        if "'company_link_checked_at' IN keys(supplier)" in query:
+            return self.supplier_link_target_records, SimpleNamespace(), []
+        if "company.cik AS cik, sum(effective_weight_pct)" in query:
+            return self.holding_weight_records, SimpleNamespace(), []
         if "WHERE EXISTS {" in query and "dependency:DEPENDS_ON" in query:
             return self.dependency_exposure_records, SimpleNamespace(), []
         if "company_path_weight_pct" in query and "dependency:DEPENDS_ON" in query:
@@ -740,3 +746,73 @@ def test_neo4j_repository_reads_unbounded_dependency_exposure_rows():
     assert "owns.weight_pct * holds.weight_pct / 100.0" in query
     # ...but aggregation must see every path.
     assert "LIMIT" not in query
+
+
+def test_neo4j_repository_lists_and_writes_supplier_company_links():
+    from app.domain.enums import SupplierCompanyLinkStatus
+    from app.domain.models import SupplierCompanyLink
+
+    driver = FakeDriver()
+    driver.supplier_link_target_records = [
+        FakeRecord(
+            supplier_id="s:tsmc",
+            canonical_name="Taiwan Semiconductor Manufacturing Company Limited",
+            aliases=["Taiwan Semiconductor Manufacturing Company Limited", "TSMC"],
+        )
+    ]
+    driver.holding_weight_records = [FakeRecord(cik="0001046179", weight_pct=16.2)]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused", user="neo4j", password="test", driver=driver
+    )
+    portfolio_id = uuid4()
+
+    [target] = repository.get_supplier_company_link_targets(portfolio_id, limit=10)
+    repository.sync_supplier_company_links(
+        [
+            SupplierCompanyLink(
+                supplier_id="s:tsmc",
+                status=SupplierCompanyLinkStatus.LINKED,
+                method="m",
+                company_cik="0001046179",
+                company_name="TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD",
+                matched_name=target.canonical_name,
+                candidate_ciks=["0001046179"],
+            )
+        ]
+    )
+    repository.sync_supplier_company_links([])  # no-op
+    weights = repository.get_company_holding_weights(portfolio_id)
+
+    assert target.aliases == ["Taiwan Semiconductor Manufacturing Company Limited", "TSMC"]
+    assert weights == {"0001046179": 16.2}
+    target_query, target_call = driver.calls[0]
+    assert target_call["limit"] == 10
+    write_query, write_call = driver.calls[1]
+    assert "MERGE (supplier)-[link:IDENTIFIED_AS]->(company)" in write_query
+    assert write_call["links"][0]["status"] == "linked"
+    assert len(driver.calls) == 3  # the empty write did not hit the driver
+
+
+def test_neo4j_dependency_exposure_rows_carry_supplier_company():
+    driver = FakeDriver()
+    driver.dependency_exposure_records = [
+        FakeRecord(
+            asset_path=["NVDA"],
+            company_cik="0001045810",
+            company_name="NVIDIA CORP",
+            supplier_id="s:tsmc",
+            supplier_name="TSMC",
+            roles=["foundry"],
+            company_path_weight_pct=100.0,
+            supplier_company_cik="0001046179",
+            supplier_company_name="TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD",
+        )
+    ]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused", user="neo4j", password="test", driver=driver
+    )
+
+    [row] = repository.get_dependency_exposure_rows(uuid4())
+
+    assert row.supplier_company_cik == "0001046179"
+    assert "OPTIONAL MATCH (supplier)-[:IDENTIFIED_AS]->(supplier_company:Company)" in driver.calls[0][0]

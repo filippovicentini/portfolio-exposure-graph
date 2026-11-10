@@ -3,7 +3,12 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from app.domain.enums import AssetStatus, AssetType, CandidateRole
+from app.domain.enums import (
+    AssetStatus,
+    AssetType,
+    CandidateRole,
+    SupplierCompanyLinkStatus,
+)
 from app.domain.models import (
     CandidateEntityResolution,
     CandidateEntityResolutionSyncResult,
@@ -27,11 +32,14 @@ from app.domain.models import (
     PortfolioStructuralExposure,
     PortfolioSupplierExposure,
     RoleExposureItem,
+    SupplierCompanyLink,
+    SupplierCompanyLinkSyncResult,
     SupplierExposureItem,
     SupplierIdentity,
 )
 from app.providers.base import (
     AssetDataProvider,
+    CompanyDirectoryProvider,
     CompanyFilingsProvider,
     CompanyMetadataProvider,
     EvidenceSemanticCandidateProvider,
@@ -45,6 +53,7 @@ from app.services.dependency_promoter import (
     DependencyPromotionRejected,
     DeterministicDependencyPromoter,
 )
+from app.services.supplier_company_linker import SupplierCompanyLinker
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +73,9 @@ class GraphService:
         semantic_candidate_provider: EvidenceSemanticCandidateProvider | None = None,
         candidate_entity_resolver: DeterministicCandidateEntityResolver | None = None,
         dependency_promoter: DeterministicDependencyPromoter | None = None,
+        company_directory_provider: CompanyDirectoryProvider | None = None,
     ) -> None:
+        self.company_directory_provider = company_directory_provider
         self.portfolio_repository = portfolio_repository
         self.graph_repository = graph_repository
         self.etf_holdings_provider = etf_holdings_provider
@@ -561,7 +572,65 @@ class GraphService:
         if self.portfolio_repository.get(portfolio_id) is None:
             return None
         rows = self.graph_repository.get_dependency_exposure_rows(portfolio_id)
-        return aggregate_supplier_exposure(portfolio_id, rows)
+        holding_weights = (
+            self.graph_repository.get_company_holding_weights(portfolio_id)
+            if any(row.supplier_company_cik for row in rows)
+            else {}
+        )
+        return aggregate_supplier_exposure(portfolio_id, rows, holding_weights)
+
+    def sync_supplier_companies(
+        self,
+        portfolio_id: UUID,
+        limit: int = 50,
+    ) -> SupplierCompanyLinkSyncResult | None:
+        """Link the portfolio's dependency Suppliers to SEC-registered companies.
+
+        Suppliers are only marked as checked once the directory loaded, so a
+        directory outage leaves them for a later run.
+        """
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+
+        targets = self.graph_repository.get_supplier_company_link_targets(
+            portfolio_id, limit=limit
+        )
+        result = SupplierCompanyLinkSyncResult(
+            portfolio_id=portfolio_id,
+            suppliers_requested=len(targets),
+            suppliers_linked=0,
+        )
+        if not targets:
+            return result
+
+        directory = None
+        if self.company_directory_provider is not None:
+            try:
+                directory = self.company_directory_provider.list_companies()
+            except Exception:
+                logger.exception("Company directory provider failed")
+        if not directory:
+            return result.model_copy(update={"directory_unavailable": True})
+
+        linker = SupplierCompanyLinker(
+            directory, source_url=self.company_directory_provider.source_url
+        )
+        links: list[SupplierCompanyLink] = [linker.link(target) for target in targets]
+        self.graph_repository.sync_supplier_company_links(links)
+
+        by_status: dict[SupplierCompanyLinkStatus, list[str]] = {
+            status: [] for status in SupplierCompanyLinkStatus
+        }
+        for link in links:
+            by_status[link.status].append(link.supplier_id)
+        return result.model_copy(
+            update={
+                "suppliers_linked": len(by_status[SupplierCompanyLinkStatus.LINKED]),
+                "linked_supplier_ids": by_status[SupplierCompanyLinkStatus.LINKED],
+                "ambiguous_supplier_ids": by_status[SupplierCompanyLinkStatus.AMBIGUOUS],
+                "unmatched_supplier_ids": by_status[SupplierCompanyLinkStatus.UNMATCHED],
+            }
+        )
 
     def _resolve_companies(
         self,
@@ -602,6 +671,7 @@ class GraphService:
 def aggregate_supplier_exposure(
     portfolio_id: UUID,
     rows: list[DependencyExposureRow],
+    holding_weights: dict[str, float] | None = None,
 ) -> PortfolioSupplierExposure:
     """Aggregate dependency rows by supplier and by role.
 
@@ -610,7 +680,12 @@ def aggregate_supplier_exposure(
     supplier, and once to every role, the company depends on. Routes are
     disjoint slices of the portfolio, so summing them never double counts
     within one supplier or role. Different suppliers and roles overlap.
+
+    ``holding_weights`` (CIK -> direct + look-through weight) adds, for
+    suppliers linked to an SEC company, how much of that supplier the
+    portfolio already holds.
     """
+    holding_weights = holding_weights or {}
 
     def route_key(row: DependencyExposureRow) -> tuple[tuple[str, ...], str]:
         return tuple(row.asset_path), row.company_cik
@@ -625,8 +700,18 @@ def aggregate_supplier_exposure(
 
         supplier = suppliers.setdefault(
             row.supplier_id,
-            {"name": row.supplier_name, "routes": {}, "roles": set(), "companies": {}},
+            {
+                "name": row.supplier_name,
+                "routes": {},
+                "roles": set(),
+                "companies": {},
+                "company_cik": None,
+                "company_name": None,
+            },
         )
+        if row.supplier_company_cik:
+            supplier["company_cik"] = row.supplier_company_cik
+            supplier["company_name"] = row.supplier_company_name
         supplier["routes"][key] = row.company_path_weight_pct
         supplier["roles"].update(row.roles)
         company = supplier["companies"].setdefault(
@@ -659,10 +744,20 @@ def aggregate_supplier_exposure(
                 ),
                 key=lambda item: (-item.weight_pct, item.company_name),
             ),
+            supplier_company_cik=data["company_cik"],
+            supplier_company_name=data["company_name"],
+            held_weight_pct=(
+                round(holding_weights.get(data["company_cik"], 0.0), 6)
+                if data["company_cik"]
+                else None
+            ),
         )
         for supplier_id, data in suppliers.items()
     ]
-    supplier_items.sort(key=lambda item: (-item.weight_pct, item.supplier_name))
+    # Ties: suppliers the portfolio also holds come first (hidden concentration).
+    supplier_items.sort(
+        key=lambda item: (-item.weight_pct, -(item.held_weight_pct or 0.0), item.supplier_name)
+    )
 
     role_items = [
         RoleExposureItem(

@@ -52,3 +52,25 @@ def test_sec_provider_returns_none_for_unknown_ticker():
     )
 
     assert provider.resolve("NOTREAL") is None
+
+
+def test_sec_provider_lists_one_directory_entry_per_cik():
+    payload = {
+        "fields": ["cik", "name", "ticker", "exchange"],
+        "data": [
+            [1046179, "TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD", "TSM", "NYSE"],
+            [1046179, "TAIWAN SEMICONDUCTOR MANUFACTURING CO LTD", "TSMWF", "OTC"],
+            [723125, "MICRON TECHNOLOGY INC", "MU", "Nasdaq"],
+        ],
+    }
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    )
+    provider = SecAssetProvider(user_agent="Portfolio Exposure Graph test@example.com", client=client)
+
+    companies = {company.cik: company for company in provider.list_companies()}
+
+    assert set(companies) == {"0001046179", "0000723125"}
+    assert companies["0001046179"].ticker == "TSM"  # first listed ticker wins
+    assert companies["0000723125"].name == "MICRON TECHNOLOGY INC"
+    assert provider.source_url == SecAssetProvider.DATA_URL

@@ -21,6 +21,12 @@ class EnrichmentJobStatus(str, Enum):
     FAILED = "failed"
 
 
+class SupplierCompanyLinkStatus(str, Enum):
+    LINKED = "linked"
+    UNMATCHED = "unmatched"
+    AMBIGUOUS = "ambiguous"
+
+
 class PortfolioStatus(str, Enum):
     READY = "ready"
     PARTIALLY_READY = "partially_ready"

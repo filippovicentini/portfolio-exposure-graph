@@ -109,6 +109,7 @@ graph_service = GraphService(
     company_filings_provider=sec_filings_provider,
     filing_evidence_provider=sec_filing_evidence_provider,
     semantic_candidate_provider=semantic_candidate_provider,
+    company_directory_provider=sec_asset_provider,
 )
 
 enrichment_service = EnrichmentService(

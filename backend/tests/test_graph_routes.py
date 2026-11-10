@@ -312,6 +312,15 @@ class FakeGraphRepository(GraphRepository):
     ) -> list[DependencyExposureRow]:
         return list(getattr(self, "dependency_exposure_rows", []))
 
+    def get_supplier_company_link_targets(self, portfolio_id: UUID, limit: int):
+        return list(getattr(self, "supplier_link_targets", []))[:limit]
+
+    def sync_supplier_company_links(self, links) -> None:
+        self.synced_supplier_links = list(links)
+
+    def get_company_holding_weights(self, portfolio_id: UUID) -> dict[str, float]:
+        return dict(getattr(self, "company_holding_weights", {}))
+
     def get_industry_exposures(
         self, portfolio_id: UUID
     ) -> list[StructuralExposureItem]:
@@ -573,4 +582,27 @@ def test_supplier_exposure_endpoint(client):
     assert body["suppliers"][0]["weight_pct"] == 100.0
     assert body["roles"][0] == {"role": "foundry", "weight_pct": 100.0, "supplier_count": 1}
     assert body["dependency_coverage_pct"] == 100.0
+    assert missing.status_code == 404
+
+
+def test_supplier_companies_sync_endpoint(client):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Links", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    original_repository = graph_service.graph_repository
+    graph_service.graph_repository = FakeGraphRepository()
+    try:
+        response = client.post(
+            f"/api/v1/portfolios/{created['portfolio_id']}/graph/supplier-companies/sync"
+        )
+        missing = client.post(
+            "/api/v1/portfolios/00000000-0000-0000-0000-000000000000"
+            "/graph/supplier-companies/sync"
+        )
+    finally:
+        graph_service.graph_repository = original_repository
+
+    assert response.status_code == 200
+    assert response.json()["suppliers_requested"] == 0
     assert missing.status_code == 404

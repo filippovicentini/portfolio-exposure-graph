@@ -377,6 +377,15 @@ class FakeGraphRepository(GraphRepository):
     ) -> list[DependencyExposureRow]:
         return list(getattr(self, "dependency_exposure_rows", []))
 
+    def get_supplier_company_link_targets(self, portfolio_id: UUID, limit: int):
+        return list(getattr(self, "supplier_link_targets", []))[:limit]
+
+    def sync_supplier_company_links(self, links) -> None:
+        self.synced_supplier_links = list(links)
+
+    def get_company_holding_weights(self, portfolio_id: UUID) -> dict[str, float]:
+        return dict(getattr(self, "company_holding_weights", {}))
+
     def get_industry_exposures(
         self, portfolio_id: UUID
     ) -> list[StructuralExposureItem]:

@@ -34,6 +34,7 @@ The graph answers one product question:
 | `CONTAINS_EVIDENCE` | Filing -> Evidence | Provenance / extracted source excerpt |
 | `SUPPORTS_CANDIDATE` | Evidence -> RelationshipCandidate | Provenance / semantic extraction proposal |
 | `RESOLVES_TO` | RelationshipCandidate -> Supplier | Internal entity identity resolution; not dependency validation |
+| `IDENTIFIED_AS` | Supplier -> Company | Supplier is the SEC registrant with this CIK (deterministic normalized-name match) |
 | `EXPOSED_TO` | Company -> Theme | Structural |
 
 ## Provenance rule
@@ -80,6 +81,8 @@ Semantic-candidate extraction is also bounded and best-effort. The graph/reposit
 Candidate-entity resolution is a separate deterministic step. It creates internal Supplier identities from exact object mentions, captures explicit filing aliases such as `Taiwan Semiconductor Manufacturing Company Limited, or TSMC`, and reuses exact aliases already stored in the graph. It does not collapse merely similar corporate names, assign CIK/LEI/ticker identifiers, or validate the proposed dependency itself. `RelationshipCandidate` therefore remains an intermediate proposal even after `RESOLVES_TO`; no `DEPENDS_ON` edge is created by this layer.
 
 Dependency promotion is another explicit bounded step. A candidate is promotable only when it proposes `DEPENDS_ON`, resolves to a Supplier, uses a supported upstream role, keeps the object mention verbatim inside the supporting text, keeps the supporting text verbatim inside the source Evidence, and the object mention matches an exact Supplier alias. The graph path itself must tie that Evidence back to the same Company and Filing. Candidates with deterministic validation failures are marked rejected with a reason; unexpected technical failures remain unmarked so they can be retried. Promoted `DEPENDS_ON` edges are qualitative and do not create or imply a numeric exposure percentage.
+
+Supplier-company linking is a separate bounded step. For each Supplier the portfolio depends on, the canonical name and aliases are normalized (case, punctuation, trailing legal forms such as `Inc`, `Co`, `Ltd`, `Company Limited`) and compared for exact equality with the normalized names in the SEC company directory. Short all-caps acronyms such as `TSMC` are not used, and names pointing at more than one CIK are reported as ambiguous and not linked. A match creates `(:Supplier)-[:IDENTIFIED_AS {method, matched_name, registrant_name, source_url}]->(:Company {cik})`, reusing the Company node when the portfolio already holds that company. Every checked Supplier records `company_link_status` (`linked`, `unmatched`, `ambiguous`); Suppliers that are not SEC registrants (e.g. Samsung Electronics, Hon Hai) correctly stay unmatched. If the directory cannot be loaded, nothing is marked so a later run retries.
 
 Portfolio dependency paths traverse either `OWNS -> REPRESENTS -> DEPENDS_ON` or one-level `OWNS -> HOLDS -> REPRESENTS -> DEPENDS_ON`. Each returned path includes the dependent Company, canonical Supplier, controlled roles, promotion basis, and source-level candidate/Evidence/Filing provenance. The numeric `company_path_weight_pct` stops at the Company: it is sourced from `OWNS` or `OWNS * HOLDS` and must not be interpreted as a percentage dependency on the Supplier.
 

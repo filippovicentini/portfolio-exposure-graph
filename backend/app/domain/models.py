@@ -13,6 +13,7 @@ from app.domain.enums import (
     CandidateRole,
     EnrichmentJobStatus,
     PortfolioStatus,
+    SupplierCompanyLinkStatus,
 )
 
 
@@ -326,6 +327,29 @@ class SupplierIdentity(BaseModel):
         return aliases
 
 
+class SupplierCompanyLink(BaseModel):
+    """Outcome of matching an internal Supplier to an SEC-registered Company."""
+
+    supplier_id: str = Field(min_length=1)
+    status: SupplierCompanyLinkStatus
+    method: str = Field(min_length=1)
+    company_cik: str | None = Field(default=None, max_length=10)
+    company_name: str | None = None
+    matched_name: str | None = None
+    candidate_ciks: list[str] = Field(default_factory=list)
+    source_url: str | None = None
+
+
+class SupplierCompanyLinkSyncResult(BaseModel):
+    portfolio_id: UUID
+    suppliers_requested: int = Field(ge=0)
+    suppliers_linked: int = Field(ge=0)
+    linked_supplier_ids: list[str] = Field(default_factory=list)
+    ambiguous_supplier_ids: list[str] = Field(default_factory=list)
+    unmatched_supplier_ids: list[str] = Field(default_factory=list)
+    directory_unavailable: bool = False
+
+
 class CandidateEntityResolution(BaseModel):
     candidate_id: str = Field(min_length=1)
     supplier: SupplierIdentity
@@ -440,6 +464,9 @@ class DependencyExposureRow(BaseModel):
     supplier_name: str = Field(min_length=1)
     roles: list[CandidateRole] = Field(min_length=1)
     company_path_weight_pct: float = Field(ge=0)
+    # The supplier's own SEC company, when an IDENTIFIED_AS link exists.
+    supplier_company_cik: str | None = Field(default=None, max_length=10)
+    supplier_company_name: str | None = None
 
 
 class DependentCompanyExposure(BaseModel):
@@ -454,6 +481,11 @@ class SupplierExposureItem(BaseModel):
     weight_pct: float = Field(ge=0)
     roles: list[CandidateRole] = Field(min_length=1)
     companies: list[DependentCompanyExposure] = Field(min_length=1)
+    supplier_company_cik: str | None = Field(default=None, max_length=10)
+    supplier_company_name: str | None = None
+    # Portfolio weight already held in the supplier itself (direct + one-level
+    # look-through). None when the supplier is not linked to an SEC company.
+    held_weight_pct: float | None = Field(default=None, ge=0)
 
 
 class RoleExposureItem(BaseModel):
@@ -474,6 +506,11 @@ class PortfolioSupplierExposure(BaseModel):
     )
     dependency_basis: str = (
         "Qualitative evidence-backed DEPENDS_ON; no numeric supplier impact is inferred"
+    )
+    held_basis: str = (
+        "Held weight is the sourced portfolio / one-level look-through weight "
+        "already held in the supplier's own SEC-registered company; it is only "
+        "reported for suppliers linked to an SEC registrant"
     )
     overlap_basis: str = (
         "A company usually depends on several suppliers, so supplier and role "

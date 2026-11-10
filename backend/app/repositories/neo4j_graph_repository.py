@@ -9,6 +9,7 @@ from app.domain.enums import AssetStatus, AssetType
 from app.domain.models import (
     CandidateEntityResolution,
     CandidateEntityResolutionTarget,
+    DependencyExposureRow,
     DependencyPath,
     DependencyProvenance,
     DependencyPromotionRejection,
@@ -503,6 +504,45 @@ class Neo4jGraphRepository(GraphRepository):
            provenance
     ORDER BY company_path_weight_pct DESC, company_name ASC, supplier_name ASC, asset_path ASC
     LIMIT $limit
+    """
+
+    # Same routes and provenance requirement as DEPENDENCY_PATHS_QUERY, but
+    # without collecting provenance and without a limit: aggregation must see
+    # every path.
+    DEPENDENCY_EXPOSURE_ROWS_QUERY = """
+    CALL () {
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(asset:Asset:Equity)
+              -[:REPRESENTS]->(company:Company)-[dependency:DEPENDS_ON]->(supplier:Supplier)
+        RETURN [asset.ticker] AS asset_path,
+               company,
+               dependency,
+               supplier,
+               owns.weight_pct AS company_path_weight_pct
+        UNION ALL
+        MATCH (p:Portfolio {portfolio_id: $portfolio_id})-[owns:OWNS]->(etf:Asset:ETF)
+              -[holds:HOLDS]->(asset:Asset)-[:REPRESENTS]->(company:Company)
+              -[dependency:DEPENDS_ON]->(supplier:Supplier)
+        RETURN [etf.ticker, asset.ticker] AS asset_path,
+               company,
+               dependency,
+               supplier,
+               owns.weight_pct * holds.weight_pct / 100.0 AS company_path_weight_pct
+    }
+    WITH asset_path, company, dependency, supplier, company_path_weight_pct
+    WHERE EXISTS {
+        MATCH (company)-[:FILED]->(:Filing)
+              -[:CONTAINS_EVIDENCE]->(:Evidence)
+              -[:SUPPORTS_CANDIDATE]->(candidate:RelationshipCandidate)
+              -[:RESOLVES_TO]->(supplier)
+        WHERE candidate.candidate_id IN coalesce(dependency.candidate_ids, [])
+    }
+    RETURN asset_path,
+           company.cik AS company_cik,
+           company.name AS company_name,
+           supplier.supplier_id AS supplier_id,
+           supplier.canonical_name AS supplier_name,
+           dependency.roles AS roles,
+           company_path_weight_pct
     """
 
     INDUSTRY_EXPOSURES_QUERY = """
@@ -1092,6 +1132,28 @@ class Neo4jGraphRepository(GraphRepository):
                     )
                     for item in record["provenance"]
                 ],
+            )
+            for record in records
+        ]
+
+    def get_dependency_exposure_rows(
+        self,
+        portfolio_id: UUID,
+    ) -> list[DependencyExposureRow]:
+        records, _, _ = self.driver.execute_query(
+            self.DEPENDENCY_EXPOSURE_ROWS_QUERY,
+            portfolio_id=str(portfolio_id),
+            database_=self.database,
+        )
+        return [
+            DependencyExposureRow(
+                asset_path=[str(item) for item in record["asset_path"]],
+                company_cik=str(record["company_cik"]),
+                company_name=str(record["company_name"]),
+                supplier_id=str(record["supplier_id"]),
+                supplier_name=str(record["supplier_name"]),
+                roles=[str(role) for role in record["roles"]],
+                company_path_weight_pct=float(record["company_path_weight_pct"]),
             )
             for record in records
         ]

@@ -8,6 +8,7 @@ const state = {
   savedPortfolios: [],
   dependencyResponse: null,
   paths: [],
+  supplierExposure: null,
   busy: false,
 };
 
@@ -42,6 +43,11 @@ const els = {
   metricSuppliers: document.querySelector("#metric-suppliers"),
   metricCompanies: document.querySelector("#metric-companies"),
   metricEvidence: document.querySelector("#metric-evidence"),
+  exposureCard: document.querySelector("#exposure-card"),
+  exposureSummary: document.querySelector("#exposure-summary"),
+  roleExposure: document.querySelector("#role-exposure"),
+  supplierExposure: document.querySelector("#supplier-exposure"),
+  exposureNote: document.querySelector("#exposure-note"),
   basisCard: document.querySelector("#basis-card"),
   weightBasis: document.querySelector("#weight-basis"),
   dependencyBasis: document.querySelector("#dependency-basis"),
@@ -451,12 +457,19 @@ async function loadDependencyPaths(portfolioId = state.portfolioId) {
   try {
     setBusy(true, "Loading dependencies…");
     addLog("Loading dependency paths…", "running");
-    const body = await requestJson(`${API_PREFIX}/portfolios/${portfolioId}/graph/dependency-paths?limit=500`, {
-      headers: {},
-    });
+    const [body, exposure] = await Promise.all([
+      requestJson(`${API_PREFIX}/portfolios/${portfolioId}/graph/dependency-paths?limit=500`, { headers: {} }),
+      requestJson(`${API_PREFIX}/portfolios/${portfolioId}/graph/supplier-exposure`, { headers: {} })
+        .catch((error) => {
+          addLog(`Supplier exposure unavailable: ${error.message}`, "error");
+          return null;
+        }),
+    ]);
     state.dependencyResponse = body;
     state.paths = body.paths || [];
+    state.supplierExposure = exposure;
     renderDependencyResponse();
+    renderSupplierExposure();
     addLog(`Loaded ${state.paths.length} dependency path${state.paths.length === 1 ? "" : "s"}.`, "success");
   } catch (error) {
     renderLoadError(error.message);
@@ -497,6 +510,7 @@ function renderLoadError(message) {
   els.resultsTitle.textContent = "Unable to load paths";
   els.summaryGrid.hidden = true;
   els.basisCard.hidden = true;
+  els.exposureCard.hidden = true;
   els.filters.hidden = true;
   els.dependencyList.innerHTML = "";
   els.empty.hidden = false;
@@ -533,6 +547,49 @@ function renderDependencyResponse() {
   }
 
   renderFilteredPaths();
+}
+
+function renderSupplierExposure() {
+  const exposure = state.supplierExposure;
+  els.exposureCard.hidden = !exposure || !exposure.suppliers.length;
+  if (els.exposureCard.hidden) return;
+
+  const top = exposure.suppliers[0];
+  els.exposureSummary.textContent = `${formatWeight(exposure.dependency_coverage_pct)} of the portfolio reaches companies with at least one promoted supplier dependency. Largest: ${top.supplier_name} (${formatWeight(top.weight_pct)}).`;
+
+  els.roleExposure.innerHTML = exposure.roles.map((item) => `
+    <span class="role-chip" title="${escapeHtml(`${item.supplier_count} supplier${item.supplier_count === 1 ? "" : "s"}`)}">
+      ${escapeHtml(normalizeRole(item.role))}<strong>${escapeHtml(formatWeight(item.weight_pct))}</strong>
+    </span>
+  `).join("");
+
+  const scale = Math.max(...exposure.suppliers.map((item) => item.weight_pct), 1);
+  const search = els.pathSearch.value.trim().toLowerCase();
+  els.supplierExposure.innerHTML = exposure.suppliers.map((item) => {
+    const companies = item.companies
+      .map((company) => `${company.company_name} ${formatWeight(company.weight_pct)}`)
+      .join(" · ");
+    const width = Math.max(2, (item.weight_pct / scale) * 100);
+    const active = search && search === item.supplier_name.toLowerCase() ? " active" : "";
+    return `
+      <button class="supplier-row${active}" type="button" data-supplier="${escapeHtml(item.supplier_name)}" title="Show this supplier's dependency paths">
+        <span class="supplier-row-name">${escapeHtml(item.supplier_name)}</span>
+        <span class="supplier-row-weight">${escapeHtml(formatWeight(item.weight_pct))}</span>
+        <span class="supplier-bar" aria-hidden="true"><span style="width: ${width.toFixed(1)}%"></span></span>
+        <small>${escapeHtml(item.roles.map(normalizeRole).join(", "))} · via ${escapeHtml(companies)}</small>
+      </button>
+    `;
+  }).join("");
+  els.supplierExposure.querySelectorAll(".supplier-row").forEach((button) => {
+    button.addEventListener("click", () => {
+      const name = button.dataset.supplier;
+      els.pathSearch.value = els.pathSearch.value.trim().toLowerCase() === name.toLowerCase() ? "" : name;
+      renderFilteredPaths();
+      renderSupplierExposure();
+    });
+  });
+
+  els.exposureNote.textContent = `${exposure.weight_basis}. ${exposure.overlap_basis}. ${exposure.dependency_basis}.`;
 }
 
 function populateRoleFilter(paths) {
@@ -636,7 +693,10 @@ els.runPipeline.addEventListener("click", runPipeline);
 els.refreshPaths.addEventListener("click", () => loadDependencyPaths());
 els.refreshSaved.addEventListener("click", loadSavedPortfolios);
 els.processQueue.addEventListener("click", processEnrichmentQueue);
-els.pathSearch.addEventListener("input", renderFilteredPaths);
+els.pathSearch.addEventListener("input", () => {
+  renderFilteredPaths();
+  renderSupplierExposure();
+});
 els.roleFilter.addEventListener("change", renderFilteredPaths);
 els.copyId.addEventListener("click", async () => {
   if (!state.portfolioId) return;

@@ -192,6 +192,31 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .basis-label { color: var(--accent-strong); font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .basis-card p { margin: 5px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.45; }
 
+.exposure-card { margin-bottom: 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-soft); }
+.exposure-summary { margin: 5px 0 0; color: var(--muted); font-size: .76rem; line-height: 1.45; }
+.role-exposure { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.role-exposure .role-chip strong { margin-left: 6px; font-variant-numeric: tabular-nums; }
+.supplier-exposure { display: grid; gap: 4px; margin-top: 12px; }
+.supplier-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  gap: 4px 12px;
+  align-items: center;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+}
+.supplier-row:hover, .supplier-row.active { border-color: rgba(134, 168, 255, .35); background: var(--accent-soft); }
+.supplier-row-name { min-width: 0; overflow: hidden; font-size: .8rem; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.supplier-row-weight { font-size: .86rem; font-weight: 800; text-align: right; font-variant-numeric: tabular-nums; }
+.supplier-bar { grid-column: 1 / -1; height: 4px; border-radius: 999px; background: rgba(255,255,255,.06); overflow: hidden; }
+.supplier-bar span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.supplier-row small { grid-column: 1 / -1; overflow: hidden; color: var(--muted-2); font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
+.exposure-note { margin: 10px 0 0; color: var(--muted-2); font-size: .68rem; line-height: 1.5; }
+
 .filters { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 10px; margin: 18px 0; }
 
 .empty-state { min-height: 460px; display: grid; place-items: center; align-content: center; text-align: center; padding: 40px 20px; }

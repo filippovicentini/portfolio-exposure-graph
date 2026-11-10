@@ -50,6 +50,7 @@ class FakeDriver:
         self.entity_resolution_target_records = []
         self.dependency_promotion_target_records = []
         self.dependency_path_records = []
+        self.dependency_exposure_records = []
         self.supplier_alias_records = []
         self.industry_exposure_records = []
         self.country_exposure_records = []
@@ -60,6 +61,8 @@ class FakeDriver:
             return self.industry_exposure_records, SimpleNamespace(), []
         if "country.sec_code AS code" in query:
             return self.country_exposure_records, SimpleNamespace(), []
+        if "WHERE EXISTS {" in query and "dependency:DEPENDS_ON" in query:
+            return self.dependency_exposure_records, SimpleNamespace(), []
         if "company_path_weight_pct" in query and "dependency:DEPENDS_ON" in query:
             return self.dependency_path_records, SimpleNamespace(), []
         if "effective_weight_pct" in query:
@@ -700,3 +703,40 @@ def test_neo4j_repository_reads_dependency_paths_with_provenance():
     assert "candidate.candidate_id IN coalesce(dependency.candidate_ids, [])" in query
     assert call["portfolio_id"] == str(portfolio_id)
     assert call["limit"] == 25
+
+
+def test_neo4j_repository_reads_unbounded_dependency_exposure_rows():
+    driver = FakeDriver()
+    driver.dependency_exposure_records = [
+        FakeRecord(
+            asset_path=["QQQ", "NVDA"],
+            company_cik="0001045810",
+            company_name="NVIDIA CORP",
+            supplier_id="supplier:tsmc",
+            supplier_name="TSMC",
+            roles=["foundry"],
+            company_path_weight_pct=2.4,
+        )
+    ]
+    repository = Neo4jGraphRepository(
+        uri="bolt://unused",
+        user="neo4j",
+        password="test",
+        driver=driver,
+    )
+    portfolio_id = uuid4()
+
+    [row] = repository.get_dependency_exposure_rows(portfolio_id)
+
+    assert row.asset_path == ["QQQ", "NVDA"]
+    assert row.supplier_id == "supplier:tsmc"
+    assert row.roles == [CandidateRole.FOUNDRY]
+    assert row.company_path_weight_pct == 2.4
+
+    query, call = driver.calls[0]
+    assert call["portfolio_id"] == str(portfolio_id)
+    # Same provenance requirement as the dependency-path query...
+    assert "candidate.candidate_id IN coalesce(dependency.candidate_ids, [])" in query
+    assert "owns.weight_pct * holds.weight_pct / 100.0" in query
+    # ...but aggregation must see every path.
+    assert "LIMIT" not in query

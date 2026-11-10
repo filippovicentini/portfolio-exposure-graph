@@ -15,7 +15,7 @@
 11. Promote only resolved, source-verifiable dependency candidates into qualitative `DEPENDS_ON` edges while preserving graph-linked provenance.
 12. Store evidence/provenance for document-derived edges.
 13. Return bounded exposure and supplier-dependency paths explaining why a portfolio is connected to an entity, including source provenance for promoted dependencies.
-14. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.
+14. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country, and by promoted Supplier and supplier role.
 15. Optionally persist portfolios, the asset registry, and enrichment jobs in PostgreSQL so they survive server restarts.
 16. Provide a small interactive local web UI for portfolio creation, saved-portfolio browsing, holding/enrichment status, graph sync, dependency-path inspection, filtering, and source-provenance expansion.
 

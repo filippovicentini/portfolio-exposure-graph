@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "portfolio-exposure-graph"
+version = "0.1.0"
+description = "Explainable portfolio exposure graph: direct, ETF look-through and SEC-evidenced supplier exposures."
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["portfolio", "exposure", "sec", "edgar", "knowledge-graph", "neo4j", "supply-chain"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "fastapi>=0.128,<1",
+    "pydantic>=2.13,<3",
+    "uvicorn[standard]>=0.34,<1",
+    "httpx>=0.28,<1",
+    "neo4j>=5.26,<6",
+]
+
+[project.optional-dependencies]
+# PostgreSQL persistence for portfolios, the asset registry and the enrichment queue.
+postgres = ["psycopg[binary]>=3.2,<4"]
+dev = ["pytest>=9,<10"]
+
+[project.scripts]
+peg = "portfolio_exposure_graph.cli:main"
+
+[project.urls]
+Repository = "https://github.com/filippovicentini/portfolio-exposure-graph"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# The web UI is served from inside the package.
+portfolio_exposure_graph = ["web/*"]
+
+[tool.pytest.ini_options]
+# "." makes the tests package importable (tests import shared fakes from each other).
+pythonpath = ["."]
+testpaths = ["tests"]

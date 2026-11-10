@@ -1,0 +1,96 @@
+from portfolio_exposure_graph.domain.enums import AssetStatus, AssetType
+from portfolio_exposure_graph.domain.models import AssetResolution
+from portfolio_exposure_graph.providers.base import AssetDataProvider
+from portfolio_exposure_graph.repositories.asset_registry import InMemoryAssetRegistry
+from portfolio_exposure_graph.services.asset_resolver import AssetResolver
+
+
+class FakeAssetProvider(AssetDataProvider):
+    def resolve(self, ticker: str) -> AssetResolution | None:
+        if ticker == "ASML":
+            return AssetResolution(
+                ticker="ASML",
+                exchange="Nasdaq",
+                asset_type=AssetType.EQUITY,
+                status=AssetStatus.READY,
+                company_name="ASML HOLDING NV",
+                cik="0000937966",
+            )
+        return None
+
+
+def test_known_asset_resolves_from_registry():
+    resolver = AssetResolver(InMemoryAssetRegistry())
+    asset = resolver.resolve("nvda")
+
+    assert asset.ticker == "NVDA"
+    assert asset.status == AssetStatus.READY
+    assert asset.asset_type == AssetType.EQUITY
+
+
+def test_new_ticker_can_be_resolved_by_provider_and_cached():
+    registry = InMemoryAssetRegistry()
+    resolver = AssetResolver(registry, providers=[FakeAssetProvider()])
+
+    asset = resolver.resolve("ASML")
+
+    assert asset.status == AssetStatus.READY
+    assert asset.asset_type == AssetType.EQUITY
+    assert asset.exchange == "Nasdaq"
+    assert asset.company_name == "ASML HOLDING NV"
+    assert asset.cik == "0000937966"
+    assert registry.get("ASML") == asset
+
+
+def test_new_valid_ticker_becomes_pending_when_no_provider_can_resolve_it():
+    resolver = AssetResolver(InMemoryAssetRegistry(), providers=[FakeAssetProvider()])
+    asset = resolver.resolve("NOTREAL")
+
+    assert asset.status == AssetStatus.PENDING_ENRICHMENT
+    assert asset.asset_type == AssetType.UNKNOWN
+
+
+def test_invalid_ticker_is_invalid():
+    resolver = AssetResolver(InMemoryAssetRegistry())
+    asset = resolver.resolve("@@@")
+
+    assert asset.status == AssetStatus.INVALID
+
+
+def test_etfs_are_not_hardcoded_in_default_registry():
+    registry = InMemoryAssetRegistry()
+
+    assert registry.get("QQQ") is None
+    assert registry.get("SMH") is None
+
+
+def test_unsupported_registry_entry_is_marked_pending_again():
+    registry = InMemoryAssetRegistry()
+    registry.save(
+        AssetResolution(
+            ticker="NEWCO", status=AssetStatus.UNSUPPORTED, asset_type=AssetType.UNKNOWN
+        )
+    )
+    resolver = AssetResolver(registry, providers=[FakeAssetProvider()])
+
+    asset = resolver.resolve("NEWCO")
+
+    assert asset.status == AssetStatus.PENDING_ENRICHMENT
+    assert registry.get("NEWCO").status == AssetStatus.PENDING_ENRICHMENT
+
+
+def test_pending_registry_entry_is_returned_without_querying_providers():
+    class CountingProvider(AssetDataProvider):
+        calls = 0
+
+        def resolve(self, ticker):
+            CountingProvider.calls += 1
+            return None
+
+    registry = InMemoryAssetRegistry()
+    resolver = AssetResolver(registry, providers=[CountingProvider()])
+    resolver.resolve("NEWCO")
+    resolver.resolve("NEWCO")
+
+    # Retrying a pending ticker is the enrichment queue's job.
+    assert CountingProvider.calls == 1

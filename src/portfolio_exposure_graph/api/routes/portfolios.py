@@ -1,0 +1,225 @@
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Query, status
+
+from portfolio_exposure_graph.dependencies import graph_service, lookthrough_service, portfolio_service
+from portfolio_exposure_graph.domain.models import (
+    CandidateEntityResolutionSyncResult,
+    CompanyFilingsSyncResult,
+    CompanyMetadataSyncResult,
+    EvidenceBackedDependenciesSyncResult,
+    EvidenceSemanticCandidatesSyncResult,
+    FilingEvidenceSyncResult,
+    GraphSyncResult,
+    Portfolio,
+    PortfolioCreate,
+    PortfolioDependencyPaths,
+    PortfolioExposurePaths,
+    PortfolioLookthrough,
+    PortfolioStructuralExposure,
+    PortfolioSupplierExposure,
+    SupplierCompanyLinkSyncResult,
+)
+
+router = APIRouter(prefix="/portfolios", tags=["portfolios"])
+
+
+@router.post("", response_model=Portfolio, status_code=status.HTTP_201_CREATED)
+def create_portfolio(payload: PortfolioCreate) -> Portfolio:
+    return portfolio_service.create(payload)
+
+
+@router.get("", response_model=list[Portfolio])
+def list_portfolios(limit: int = Query(default=50, ge=1, le=200)) -> list[Portfolio]:
+    return portfolio_service.list(limit=limit)
+
+
+@router.get("/{portfolio_id}", response_model=Portfolio)
+def get_portfolio(portfolio_id: UUID) -> Portfolio:
+    portfolio = portfolio_service.get(portfolio_id)
+    if portfolio is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return portfolio
+
+
+@router.get("/{portfolio_id}/lookthrough", response_model=PortfolioLookthrough)
+def get_portfolio_lookthrough(portfolio_id: UUID) -> PortfolioLookthrough:
+    lookthrough = lookthrough_service.calculate(portfolio_id)
+    if lookthrough is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return lookthrough
+
+
+@router.post("/{portfolio_id}/graph/sync", response_model=GraphSyncResult)
+def sync_portfolio_graph(portfolio_id: UUID) -> GraphSyncResult:
+    result = graph_service.sync(portfolio_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/company-metadata/sync",
+    response_model=CompanyMetadataSyncResult,
+)
+def sync_portfolio_company_metadata(
+    portfolio_id: UUID,
+    limit: int = Query(default=25, ge=1, le=100),
+) -> CompanyMetadataSyncResult:
+    result = graph_service.sync_company_metadata(portfolio_id, limit=limit)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/sec-filings/sync",
+    response_model=CompanyFilingsSyncResult,
+)
+def sync_portfolio_sec_filings(
+    portfolio_id: UUID,
+    company_limit: int = Query(default=5, ge=1, le=25),
+    filings_per_company: int = Query(default=4, ge=1, le=20),
+) -> CompanyFilingsSyncResult:
+    result = graph_service.sync_company_filings(
+        portfolio_id,
+        company_limit=company_limit,
+        filings_per_company=filings_per_company,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/filing-evidence/sync",
+    response_model=FilingEvidenceSyncResult,
+)
+def sync_portfolio_filing_evidence(
+    portfolio_id: UUID,
+    filing_limit: int = Query(default=4, ge=1, le=20),
+    evidence_per_filing: int = Query(default=5, ge=1, le=20),
+) -> FilingEvidenceSyncResult:
+    result = graph_service.sync_filing_evidence(
+        portfolio_id,
+        filing_limit=filing_limit,
+        evidence_per_filing=evidence_per_filing,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/evidence-semantic-candidates/sync",
+    response_model=EvidenceSemanticCandidatesSyncResult,
+)
+def sync_portfolio_evidence_semantic_candidates(
+    portfolio_id: UUID,
+    evidence_limit: int = Query(default=10, ge=1, le=20),
+    candidates_per_evidence: int = Query(default=5, ge=1, le=10),
+) -> EvidenceSemanticCandidatesSyncResult:
+    result = graph_service.sync_evidence_semantic_candidates(
+        portfolio_id,
+        evidence_limit=evidence_limit,
+        candidates_per_evidence=candidates_per_evidence,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/candidate-entities/sync",
+    response_model=CandidateEntityResolutionSyncResult,
+)
+def sync_portfolio_candidate_entities(
+    portfolio_id: UUID,
+    candidate_limit: int = Query(default=25, ge=1, le=100),
+) -> CandidateEntityResolutionSyncResult:
+    result = graph_service.sync_candidate_entity_resolutions(
+        portfolio_id,
+        candidate_limit=candidate_limit,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/evidence-backed-dependencies/sync",
+    response_model=EvidenceBackedDependenciesSyncResult,
+)
+def sync_portfolio_evidence_backed_dependencies(
+    portfolio_id: UUID,
+    candidate_limit: int = Query(default=25, ge=1, le=100),
+) -> EvidenceBackedDependenciesSyncResult:
+    result = graph_service.sync_evidence_backed_dependencies(
+        portfolio_id,
+        candidate_limit=candidate_limit,
+    )
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.get("/{portfolio_id}/graph/paths", response_model=PortfolioExposurePaths)
+def get_portfolio_graph_paths(portfolio_id: UUID) -> PortfolioExposurePaths:
+    result = graph_service.get_paths(portfolio_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.get(
+    "/{portfolio_id}/graph/dependency-paths",
+    response_model=PortfolioDependencyPaths,
+)
+def get_portfolio_dependency_paths(
+    portfolio_id: UUID,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> PortfolioDependencyPaths:
+    result = graph_service.get_dependency_paths(portfolio_id, limit=limit)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.get(
+    "/{portfolio_id}/graph/structural-exposure",
+    response_model=PortfolioStructuralExposure,
+)
+def get_portfolio_structural_exposure(
+    portfolio_id: UUID,
+) -> PortfolioStructuralExposure:
+    result = graph_service.get_structural_exposure(portfolio_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.get(
+    "/{portfolio_id}/graph/supplier-exposure",
+    response_model=PortfolioSupplierExposure,
+)
+def get_portfolio_supplier_exposure(
+    portfolio_id: UUID,
+) -> PortfolioSupplierExposure:
+    result = graph_service.get_supplier_exposure(portfolio_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/supplier-companies/sync",
+    response_model=SupplierCompanyLinkSyncResult,
+)
+def sync_portfolio_supplier_companies(
+    portfolio_id: UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> SupplierCompanyLinkSyncResult:
+    result = graph_service.sync_supplier_companies(portfolio_id, limit=limit)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result

@@ -12,7 +12,8 @@ The product question is intentionally narrow:
 
 Implemented:
 
-- FastAPI backend and portfolio weight validation
+- installable Python package with a `peg serve` command (FastAPI API + web UI)
+- portfolio weight validation
 - dynamic equity resolution through SEC ticker data
 - dynamic US ETF recognition through Alpha Vantage listing data
 - ETF holdings ingestion and one-level look-through
@@ -133,17 +134,40 @@ export OLLAMA_MODEL="qwen3:4b-instruct"
 
 With `SEMANTIC_PROVIDER` unset, the rest of the application still works and semantic-candidate Evidence remains available for later processing. Ollama is contacted only when the semantic-candidate sync endpoint is called.
 
-## Run locally
+## Install
 
-From the repository root:
+The project is a Python package (`portfolio-exposure-graph`, Python 3.11+) with a `peg` command. Install it from GitHub:
 
 ```bash
-source .venv/bin/activate
-pip install -r backend/requirements.txt
-docker compose up -d neo4j        # add `postgres` when PORTFOLIO_STORE=postgres
-cd backend
-uvicorn app.main:app --reload
+pip install "portfolio-exposure-graph @ git+https://github.com/filippovicentini/portfolio-exposure-graph"
 ```
+
+Optional extras:
+
+- `postgres`: PostgreSQL persistence (`PORTFOLIO_STORE=postgres`), e.g. `pip install "portfolio-exposure-graph[postgres] @ git+https://github.com/filippovicentini/portfolio-exposure-graph"`
+- `dev`: the test runner
+
+For development, from a clone:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[postgres,dev]"
+```
+
+## Run locally
+
+Start Neo4j (and PostgreSQL if you use `PORTFOLIO_STORE=postgres`) from the repository root, then the app:
+
+```bash
+docker compose up -d neo4j
+```
+
+```bash
+peg serve
+```
+
+`peg serve` takes `--host` (default `127.0.0.1`), `--port` (default `8000`) and `--reload`; `python -m portfolio_exposure_graph serve` is equivalent. Configuration comes from the environment variables above.
 
 Open the local web UI at `http://127.0.0.1:8000/`. The UI can create and graph-sync a portfolio, reopen saved portfolios, show each holding's resolution and enrichment status, process the enrichment queue (re-syncing the graph when a holding resolves), load promoted Supplier dependency paths, filter them by role/search text, and expand source-level SEC provenance. It also exposes an optional bounded dependency-enrichment pipeline; semantic extraction in that flow requires `SEMANTIC_PROVIDER=ollama`.
 
@@ -176,13 +200,15 @@ GET  /api/v1/portfolios/{portfolio_id}/graph/supplier-exposure
 ## Test
 
 ```bash
-cd backend
 python -m pytest
 ```
 
 Provider tests use mocks. The normal test suite does not require SEC, Alpha Vantage, Ollama, PostgreSQL, or a running Neo4j instance.
 
-CI (GitHub Actions) runs the full suite on every pull request and push to `main`, against a PostgreSQL 16 service, so the PostgreSQL tests run there too; it also syntax-checks the web UI script.
+CI (GitHub Actions) runs on every pull request and push to `main`:
+
+- the full suite on Python 3.11, 3.12 and 3.13, against a PostgreSQL 16 service, so the PostgreSQL tests run there too, plus a syntax check of the web UI script;
+- a packaging check that builds the wheel, installs it in a clean virtualenv without extras, and serves the API and web UI from the installed package.
 
 Locally, PostgreSQL repository tests are skipped unless `TEST_DATABASE_URL` is set; each run uses a temporary schema that is dropped afterwards:
 

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Backend tests (with PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: peg
+          POSTGRES_USER: peg
+          POSTGRES_PASSWORD: peg
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U peg -d peg"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        env:
+          # Enables the PostgreSQL store tests, which are skipped otherwise.
+          TEST_DATABASE_URL: postgresql://peg:peg@localhost:5432/peg
+        run: python -m pytest -rs
+
+      - name: Check web UI script syntax
+        run: node --check app/web/app.js

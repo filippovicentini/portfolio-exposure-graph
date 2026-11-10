@@ -16,6 +16,15 @@ from app.main import app
 from app.repositories.asset_registry import InMemoryAssetRegistry
 
 
+@pytest.fixture(scope="session", autouse=True)
+def close_graph_driver():
+    """Close the app-wide Neo4j driver once the test session ends."""
+    from app.dependencies import graph_repository
+
+    yield
+    graph_repository.close()
+
+
 @pytest.fixture(autouse=True)
 def reset_state():
     portfolio_repository._portfolios.clear()

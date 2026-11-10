@@ -1,5 +1,7 @@
 # Portfolio Exposure Graph
 
+[![CI](https://github.com/filippovicentini/portfolio-exposure-graph/actions/workflows/ci.yml/badge.svg)](https://github.com/filippovicentini/portfolio-exposure-graph/actions/workflows/ci.yml)
+
 A small, explainable portfolio intelligence application that reveals direct and indirect economic exposures hidden behind a list of holdings.
 
 The product question is intentionally narrow:
@@ -177,7 +179,9 @@ python -m pytest
 
 Provider tests use mocks. The normal test suite does not require SEC, Alpha Vantage, Ollama, PostgreSQL, or a running Neo4j instance.
 
-PostgreSQL repository tests are skipped unless `TEST_DATABASE_URL` is set; each run uses a temporary schema that is dropped afterwards:
+CI (GitHub Actions) runs the full suite on every pull request and push to `main`, against a PostgreSQL 16 service, so the PostgreSQL tests run there too; it also syntax-checks the web UI script.
+
+Locally, PostgreSQL repository tests are skipped unless `TEST_DATABASE_URL` is set; each run uses a temporary schema that is dropped afterwards:
 
 ```bash
 TEST_DATABASE_URL="postgresql://peg:peg@localhost:5432/peg" python -m pytest tests/test_postgres_*.py

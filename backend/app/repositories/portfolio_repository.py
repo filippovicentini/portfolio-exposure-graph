@@ -6,6 +6,9 @@ from uuid import UUID
 from app.domain.enums import AssetStatus
 from app.domain.models import Portfolio
 
+# Positions an enrichment job may still resolve.
+UNRESOLVED_ASSET_STATUSES = (AssetStatus.PENDING_ENRICHMENT, AssetStatus.UNSUPPORTED)
+
 
 class PortfolioRepository(ABC):
     @abstractmethod
@@ -22,8 +25,8 @@ class PortfolioRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def find_with_pending_ticker(self, ticker: str) -> list[Portfolio]:
-        """Return portfolios holding ``ticker`` with a PENDING_ENRICHMENT asset."""
+    def find_with_unresolved_ticker(self, ticker: str) -> list[Portfolio]:
+        """Return portfolios holding ``ticker`` as PENDING_ENRICHMENT or UNSUPPORTED."""
         raise NotImplementedError
 
 
@@ -46,13 +49,13 @@ class InMemoryPortfolioRepository(PortfolioRepository):
         )
         return ordered[:limit]
 
-    def find_with_pending_ticker(self, ticker: str) -> list[Portfolio]:
+    def find_with_unresolved_ticker(self, ticker: str) -> list[Portfolio]:
         return [
             portfolio
             for portfolio in self._portfolios.values()
             if any(
                 position.ticker == ticker
-                and position.asset.status == AssetStatus.PENDING_ENRICHMENT
+                and position.asset.status in UNRESOLVED_ASSET_STATUSES
                 for position in portfolio.positions
             )
         ]

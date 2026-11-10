@@ -237,6 +237,31 @@ def test_provider_errors_fail_job_but_keep_asset_pending(setup):
     assert portfolios.get(later.portfolio_id).status == PortfolioStatus.READY
 
 
+def test_unsupported_ticker_is_retried_by_a_later_portfolio_and_upgrades_both(setup):
+    provider, registry, _queue, portfolios, portfolio_service, service = setup
+    first = _create(portfolio_service)
+    service.process()
+    service.process()
+    assert portfolios.get(first.portfolio_id).positions[1].asset.status == (
+        AssetStatus.UNSUPPORTED
+    )
+
+    # The ticker becomes known (e.g. a new listing); a new portfolio holding
+    # it queues a fresh job instead of inheriting UNSUPPORTED.
+    provider.known["ASML"] = ASML
+    later = _create(portfolio_service, "Later", (("ASML", 100),))
+    assert later.positions[0].asset.status == AssetStatus.PENDING_ENRICHMENT
+    assert later.enrichment_jobs
+
+    result = service.process()
+
+    assert result.jobs_completed == 1
+    assert result.portfolios_updated == 2
+    for portfolio_id in (first.portfolio_id, later.portfolio_id):
+        assert portfolios.get(portfolio_id).status == PortfolioStatus.READY
+    assert registry.get("ASML").status == AssetStatus.READY
+
+
 def test_no_providers_configured_is_reported_as_error():
     resolver = AssetResolver(InMemoryAssetRegistry(), providers=[])
     queue = InMemoryEnrichmentQueue()

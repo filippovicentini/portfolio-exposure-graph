@@ -62,3 +62,35 @@ def test_etfs_are_not_hardcoded_in_default_registry():
 
     assert registry.get("QQQ") is None
     assert registry.get("SMH") is None
+
+
+def test_unsupported_registry_entry_is_marked_pending_again():
+    registry = InMemoryAssetRegistry()
+    registry.save(
+        AssetResolution(
+            ticker="NEWCO", status=AssetStatus.UNSUPPORTED, asset_type=AssetType.UNKNOWN
+        )
+    )
+    resolver = AssetResolver(registry, providers=[FakeAssetProvider()])
+
+    asset = resolver.resolve("NEWCO")
+
+    assert asset.status == AssetStatus.PENDING_ENRICHMENT
+    assert registry.get("NEWCO").status == AssetStatus.PENDING_ENRICHMENT
+
+
+def test_pending_registry_entry_is_returned_without_querying_providers():
+    class CountingProvider(AssetDataProvider):
+        calls = 0
+
+        def resolve(self, ticker):
+            CountingProvider.calls += 1
+            return None
+
+    registry = InMemoryAssetRegistry()
+    resolver = AssetResolver(registry, providers=[CountingProvider()])
+    resolver.resolve("NEWCO")
+    resolver.resolve("NEWCO")
+
+    # Retrying a pending ticker is the enrichment queue's job.
+    assert CountingProvider.calls == 1

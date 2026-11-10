@@ -29,14 +29,13 @@ Implemented:
 - deterministic promotion of fully resolved, source-verifiable candidates into qualitative `Company -> DEPENDS_ON -> Supplier` edges with graph-linked provenance
 - bounded portfolio dependency-path API with direct/ETF routes and source-level provenance
 - local web UI for creating/syncing portfolios and inspecting Supplier dependency paths with expandable SEC provenance
-- optional PostgreSQL persistence for portfolios and the enrichment queue (`PORTFOLIO_STORE=postgres`), with portfolio listing
+- optional PostgreSQL persistence for portfolios, the asset registry, and the enrichment queue (`PORTFOLIO_STORE=postgres`), with portfolio listing
 - enrichment-queue processing for unseen tickers: bounded API endpoint or opt-in background worker, with retries, leases, and portfolio updates
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
 - enrich internal Supplier identities with external identifiers where defensible
-- persist the asset registry
 - improve local setup
 - add richer dependency aggregation and filtering as the graph grows
 
@@ -89,20 +88,21 @@ export NEO4J_PASSWORD="portfolioexposure"
 export NEO4J_DATABASE="neo4j"
 ```
 
-Portfolios and enrichment jobs are kept in memory by default and are lost when the server restarts. To persist both in the local PostgreSQL from `docker-compose.yml`:
+Portfolios, the asset registry, and enrichment jobs are kept in memory by default and are lost when the server restarts. To persist them in the local PostgreSQL from `docker-compose.yml`:
 
 ```bash
 export PORTFOLIO_STORE="postgres"
 export DATABASE_URL="postgresql://peg:peg@localhost:5432/peg"
 ```
 
-`DATABASE_URL` defaults to the compose credentials on `POSTGRES_PORT` (default `5432`). The `portfolios` and `enrichment_jobs` tables are created automatically on first use. The asset registry is still in memory.
+`DATABASE_URL` defaults to the compose credentials on `POSTGRES_PORT` (default `5432`). The `portfolios`, `assets`, and `enrichment_jobs` tables are created automatically on first use. The registry's development seeds (NVDA, MSFT) are inserted once and never overwrite a stored asset.
 
 ## Enrichment queue
 
 A syntactically valid ticker that no provider recognises at portfolio creation becomes `PENDING_ENRICHMENT` and gets an enrichment job. There is at most one active job per ticker, shared by every portfolio holding it. Processing a job retries the asset providers for that ticker:
 
 - resolved: the job is `completed`, the asset registry is updated, and every portfolio holding the ticker as pending gets the resolved asset (the portfolio becomes `ready` once nothing is pending or unsupported). Re-run graph sync to bring the new asset into Neo4j.
+- a ticker previously marked `UNSUPPORTED` is not trusted forever: when a new portfolio holds it, it becomes pending again and gets a fresh job, which upgrades every portfolio holding it if a provider now recognises it.
 - not resolved: the job goes back to `queued` with `last_error` until `ENRICHMENT_MAX_ATTEMPTS` (default 3), then `failed`. On the final attempt the asset becomes `UNSUPPORTED` only if every provider answered and none recognised the ticker; if a provider errored (network, missing `SEC_USER_AGENT`), the asset stays pending and a new portfolio holding it queues a fresh job.
 
 A claimed job carries a 10-minute lease, so a job left `processing` by a crashed worker becomes claimable again. With PostgreSQL, jobs are claimed with `FOR UPDATE SKIP LOCKED`, so several workers never process the same job.

@@ -1,5 +1,9 @@
 from portfolio_exposure_graph.core.config import settings
 from portfolio_exposure_graph.providers.alpha_vantage_etf_provider import AlphaVantageEtfProvider
+from portfolio_exposure_graph.providers.ucits_etf_provider import (
+    RoutingEtfHoldingsProvider,
+    UcitsEtfProvider,
+)
 from portfolio_exposure_graph.providers.ollama_semantic_candidate_provider import (
     OllamaSemanticCandidateProvider,
 )
@@ -85,6 +89,11 @@ sec_filing_evidence_provider = SecFilingEvidenceProvider(user_agent=settings.sec
 alpha_vantage_etf_provider = AlphaVantageEtfProvider(
     api_key=settings.alpha_vantage_api_key
 )
+ucits_etf_provider = UcitsEtfProvider()
+# UCITS ETFs are looked through from their issuers' files; others via Alpha Vantage.
+etf_holdings_provider = RoutingEtfHoldingsProvider(
+    ucits=ucits_etf_provider, fallback=alpha_vantage_etf_provider
+)
 semantic_candidate_provider = (
     OllamaSemanticCandidateProvider(
         base_url=settings.ollama_base_url,
@@ -101,7 +110,7 @@ graph_repository = Neo4jGraphRepository(
 )
 asset_resolver = AssetResolver(
     asset_registry,
-    providers=[alpha_vantage_etf_provider, sec_asset_provider],
+    providers=[ucits_etf_provider, alpha_vantage_etf_provider, sec_asset_provider],
 )
 portfolio_service = PortfolioService(
     repository=portfolio_repository,
@@ -110,13 +119,13 @@ portfolio_service = PortfolioService(
 )
 lookthrough_service = LookthroughService(
     repository=portfolio_repository,
-    etf_holdings_provider=alpha_vantage_etf_provider,
+    etf_holdings_provider=etf_holdings_provider,
 )
 
 graph_service = GraphService(
     portfolio_repository=portfolio_repository,
     graph_repository=graph_repository,
-    etf_holdings_provider=alpha_vantage_etf_provider,
+    etf_holdings_provider=etf_holdings_provider,
     company_asset_provider=sec_asset_provider,
     company_metadata_provider=sec_company_metadata_provider,
     company_filings_provider=sec_filings_provider,

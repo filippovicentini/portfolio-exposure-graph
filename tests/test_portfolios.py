@@ -38,11 +38,27 @@ def test_unknown_ticker_is_queued_without_blocking_portfolio_creation(client):
     assert body["enrichment_jobs"][0]["status"] == "queued"
 
 
-def test_weights_must_sum_to_100(client):
+def test_weights_may_not_exceed_100(client):
     response = client.post(
         "/api/v1/portfolios",
         json={
             "name": "Broken",
+            "positions": [
+                {"ticker": "NVDA", "weight_pct": 70},
+                {"ticker": "MSFT", "weight_pct": 40},
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "must not exceed 100%" in response.text
+
+
+def test_weights_below_100_leave_the_rest_unanalysed(client):
+    response = client.post(
+        "/api/v1/portfolios",
+        json={
+            "name": "Equity sleeve",
             "positions": [
                 {"ticker": "NVDA", "weight_pct": 30},
                 {"ticker": "MSFT", "weight_pct": 30},
@@ -50,7 +66,12 @@ def test_weights_must_sum_to_100(client):
         },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 201
+    lookthrough = client.get(
+        f"/api/v1/portfolios/{response.json()['portfolio_id']}/lookthrough"
+    ).json()
+    assert lookthrough["analysed_weight_pct"] == 60.0
+    assert lookthrough["not_analysed_weight_pct"] == 40.0
 
 
 def test_duplicate_tickers_are_rejected(client):

@@ -48,6 +48,11 @@ def test_lookthrough_combines_direct_and_indirect_exposure(client):
         "indirect_weight_pct": 2.4,
         "total_weight_pct": 72.4,
         "via_etfs": ["QQQ"],
+        # The US-ETF source gives a name but no classification.
+        "name": "NVIDIA",
+        "country": None,
+        "sector": None,
+        "asset_class": None,
     }
     assert exposures["AAPL"]["direct_weight_pct"] == 0.0
     assert exposures["AAPL"]["indirect_weight_pct"] == 2.1

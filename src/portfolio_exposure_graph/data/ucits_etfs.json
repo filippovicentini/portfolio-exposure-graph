@@ -1,0 +1,44 @@
+{
+  "_comment": "UCITS ETFs whose holdings can be looked through. Each fund is identified by ISIN; tickers are its common exchange tickers. Holdings come from the issuer's own published file. Add a fund by adding an entry; 'issuer' selects the parser.",
+  "funds": [
+    {
+      "isin": "IE00B4L5Y983",
+      "name": "iShares Core MSCI World UCITS ETF (Acc)",
+      "issuer": "ishares",
+      "tickers": ["SWDA", "IWDA", "EUNL"],
+      "ishares_product_id": "251882"
+    },
+    {
+      "isin": "IE00B5BMR087",
+      "name": "iShares Core S&P 500 UCITS ETF (Acc)",
+      "issuer": "ishares",
+      "tickers": ["CSPX", "SXR8"],
+      "ishares_product_id": "253743"
+    },
+    {
+      "isin": "IE00BKM4GZ66",
+      "name": "iShares Core MSCI EM IMI UCITS ETF (Acc)",
+      "issuer": "ishares",
+      "tickers": ["EIMI", "IS3N"],
+      "ishares_product_id": "264659"
+    },
+    {
+      "isin": "IE00BTJRMP35",
+      "name": "Xtrackers MSCI Emerging Markets UCITS ETF 1C",
+      "issuer": "xtrackers",
+      "tickers": ["XMME"]
+    },
+    {
+      "isin": "IE00BJ0KDQ92",
+      "name": "Xtrackers MSCI World UCITS ETF 1C",
+      "issuer": "xtrackers",
+      "tickers": ["XDWD"]
+    },
+    {
+      "isin": "IE000VAHT5T0",
+      "name": "Vanguard FTSE Global All-Cap UCITS ETF (USD Acc)",
+      "issuer": "vanguard",
+      "tickers": ["VALL"]
+    }
+  ]
+}

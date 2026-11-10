@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from portfolio_exposure_graph.domain.models import (
+    AssetResolution,
+    CompanyFilings,
+    CompanyMetadata,
+    CompanyResolution,
+    EvidenceSemanticCandidateBatch,
+    EvidenceSemanticTarget,
+    EtfHolding,
+    FilingEvidenceBatch,
+    FilingEvidenceTarget,
+)
+
+
+class AssetDataProvider(ABC):
+    """Resolve an asset ticker using an external data source."""
+
+    @abstractmethod
+    def resolve(self, ticker: str) -> AssetResolution | None:
+        raise NotImplementedError
+
+
+class CompanyDirectoryProvider(ABC):
+    """List registered companies (one entry per CIK) for name matching."""
+
+    source_url: str | None = None
+
+    @abstractmethod
+    def list_companies(self) -> list[CompanyResolution]:
+        raise NotImplementedError
+
+
+class EtfHoldingsProvider(ABC):
+    """Return the latest known holdings for an ETF ticker."""
+
+    @abstractmethod
+    def get_holdings(self, ticker: str) -> list[EtfHolding]:
+        raise NotImplementedError
+
+
+class CompanyMetadataProvider(ABC):
+    """Return structural company metadata from an external data source."""
+
+    @abstractmethod
+    def get_metadata(self, cik: str) -> CompanyMetadata | None:
+        raise NotImplementedError
+
+
+class CompanyFilingsProvider(ABC):
+    """Return recent SEC filing metadata for a canonical company."""
+
+    @abstractmethod
+    def get_recent_filings(
+        self,
+        cik: str,
+        limit: int,
+    ) -> CompanyFilings | None:
+        raise NotImplementedError
+
+
+class FilingEvidenceProvider(ABC):
+    """Extract traceable evidence candidates from a source filing."""
+
+    @abstractmethod
+    def extract_evidence(
+        self,
+        filing: FilingEvidenceTarget,
+        limit: int,
+    ) -> FilingEvidenceBatch | None:
+        raise NotImplementedError
+
+
+class EvidenceSemanticCandidateProvider(ABC):
+    """Extract structured relationship candidates from traceable evidence."""
+
+    @abstractmethod
+    def extract_candidates(
+        self,
+        evidence: EvidenceSemanticTarget,
+        limit: int,
+    ) -> EvidenceSemanticCandidateBatch | None:
+        raise NotImplementedError

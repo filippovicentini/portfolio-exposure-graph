@@ -14,9 +14,13 @@ concurrency:
 
 jobs:
   test:
-    name: Backend tests (with PostgreSQL)
+    name: Tests (Python ${{ matrix.python-version }}, with PostgreSQL)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
 
     services:
       postgres:
@@ -33,21 +37,17 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-    defaults:
-      run:
-        working-directory: backend
-
     steps:
       - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: pyproject.toml
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install package with test extras
+        run: pip install -e ".[postgres,dev]"
 
       - name: Run tests
         env:
@@ -56,4 +56,36 @@ jobs:
         run: python -m pytest -rs
 
       - name: Check web UI script syntax
-        run: node --check app/web/app.js
+        run: node --check src/portfolio_exposure_graph/web/app.js
+
+  package:
+    name: Build and smoke-test the wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Build wheel
+        run: pip wheel --no-deps -w dist .
+
+      - name: Install the wheel in a clean virtualenv (no extras)
+        run: |
+          python -m venv /tmp/peg
+          /tmp/peg/bin/pip install dist/*.whl
+
+      - name: Serve the API and web UI from the installed package
+        # Run outside the checkout so only the installed package is used.
+        working-directory: /tmp
+        run: |
+          /tmp/peg/bin/peg --version
+          /tmp/peg/bin/peg serve --port 8000 > /tmp/peg.log 2>&1 &
+          for _ in $(seq 30); do curl -sf http://127.0.0.1:8000/health && break; sleep 1; done
+          for path in /health / /static/app.js /static/styles.css; do
+            curl -sf -o /dev/null "http://127.0.0.1:8000$path" || { echo "GET $path failed"; cat /tmp/peg.log; exit 1; }
+          done
+          echo "All endpoints served from the installed wheel."

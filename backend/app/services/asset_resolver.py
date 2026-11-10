@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import logging
-import re
 
 from app.domain.enums import AssetStatus, AssetType
-from app.domain.models import AssetResolution
+from app.domain.models import TICKER_PATTERN, AssetResolution
 from app.providers.base import AssetDataProvider
 from app.repositories.asset_registry import AssetRegistry
 
 logger = logging.getLogger(__name__)
-
-TICKER_PATTERN = re.compile(r"^[A-Z][A-Z0-9.\-]{0,23}$")
 
 
 class AssetResolver:

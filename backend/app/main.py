@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import enrichment, health, portfolios
 from app.core.config import settings
-from app.dependencies import enrichment_service
+from app.dependencies import enrichment_service, graph_repository
 from app.services.enrichment_worker import EnrichmentWorker
 
 
@@ -26,6 +26,7 @@ async def lifespan(_app: FastAPI):
     finally:
         if worker is not None:
             worker.stop()
+        graph_repository.close()
 
 
 app = FastAPI(

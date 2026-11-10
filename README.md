@@ -67,7 +67,7 @@ Each step is a separate, bounded, re-runnable API call; the web UI can run them 
 - the supporting text must appear verbatim in the source excerpt;
 - the excerpt must belong to the same company's filing.
 
-A hallucinated supplier or quote is rejected rather than stored.
+A hallucinated supplier or quote is rejected rather than stored. How well this works is measured, not assumed: `peg eval` scores the model on 66 hand-labeled real filing excerpts, before and after validation. See [`evals/`](evals/README.md).
 
 **No invented numbers.** The only numeric weights are sourced ones: portfolio weights, and ETF holding weights for look-through. A supplier's weight means "portfolio weight reaching companies that depend on it". It is not an estimate of revenue share or impact, and the exposure responses state their basis explicitly. Supplier weights overlap and can sum to more than 100%; a separate coverage figure counts each holding route once.
 
@@ -150,7 +150,13 @@ CI runs on every pull request and push to `main`:
 - the full suite on Python 3.11, 3.12 and 3.13, against PostgreSQL 16;
 - a packaging job that builds the wheel, installs it in a clean virtualenv and serves the app from it.
 
-Layout: `src/portfolio_exposure_graph/` (`providers/` for external data sources, `repositories/` for Neo4j and PostgreSQL storage, `services/` for pipeline logic, `api/` for FastAPI routes, `web/` for the UI), `tests/`, `docs/`.
+To evaluate LLM extraction against the labeled dataset (needs Ollama):
+
+```bash
+peg eval --out evals/report.json
+```
+
+Layout: `src/portfolio_exposure_graph/` (`providers/` for external data sources, `repositories/` for Neo4j and PostgreSQL storage, `services/` for pipeline logic, `api/` for FastAPI routes, `web/` for the UI), `tests/`, `docs/`, `evals/` (labeled dataset and evaluation notes).
 
 ## Limitations
 

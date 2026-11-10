@@ -27,6 +27,11 @@ def create_portfolio(payload: PortfolioCreate) -> Portfolio:
     return portfolio_service.create(payload)
 
 
+@router.get("", response_model=list[Portfolio])
+def list_portfolios(limit: int = Query(default=50, ge=1, le=200)) -> list[Portfolio]:
+    return portfolio_service.list(limit=limit)
+
+
 @router.get("/{portfolio_id}", response_model=Portfolio)
 def get_portfolio(portfolio_id: UUID) -> Portfolio:
     portfolio = portfolio_service.get(portfolio_id)

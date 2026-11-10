@@ -66,3 +66,31 @@ def test_duplicate_tickers_are_rejected(client):
     )
 
     assert response.status_code == 422
+
+
+def test_list_portfolios_returns_newest_first(client):
+    for name in ("First", "Second"):
+        response = client.post(
+            "/api/v1/portfolios",
+            json={"name": name, "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+        )
+        assert response.status_code == 201
+
+    response = client.get("/api/v1/portfolios")
+
+    assert response.status_code == 200
+    assert [portfolio["name"] for portfolio in response.json()] == ["Second", "First"]
+
+    limited = client.get("/api/v1/portfolios", params={"limit": 1})
+    assert [portfolio["name"] for portfolio in limited.json()] == ["Second"]
+
+
+def test_unknown_portfolio_store_is_rejected(monkeypatch):
+    import pytest
+
+    from app import dependencies
+
+    monkeypatch.setattr(dependencies.settings, "portfolio_store", "sqlite")
+
+    with pytest.raises(ValueError, match="PORTFOLIO_STORE"):
+        dependencies.build_portfolio_repository()

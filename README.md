@@ -29,12 +29,15 @@ Implemented:
 - deterministic promotion of fully resolved, source-verifiable candidates into qualitative `Company -> DEPENDS_ON -> Supplier` edges with graph-linked provenance
 - bounded portfolio dependency-path API with direct/ETF routes and source-level provenance
 - local web UI for creating/syncing portfolios and inspecting Supplier dependency paths with expandable SEC provenance
+- optional PostgreSQL persistence for portfolios and the enrichment queue (`PORTFOLIO_STORE=postgres`), with portfolio listing
+- enrichment-queue processing for unseen tickers: bounded API endpoint or opt-in background worker, with retries, leases, and portfolio updates
 - mocked provider/repository tests that do not require external services
 
 Next milestones:
 
 - enrich internal Supplier identities with external identifiers where defensible
-- improve local setup and portfolio persistence
+- persist the asset registry
+- improve local setup
 - add richer dependency aggregation and filtering as the graph grows
 
 Out of scope for the MVP: price prediction, trading recommendations, portfolio optimization, broker integration, and real-time market data.
@@ -86,6 +89,33 @@ export NEO4J_PASSWORD="portfolioexposure"
 export NEO4J_DATABASE="neo4j"
 ```
 
+Portfolios and enrichment jobs are kept in memory by default and are lost when the server restarts. To persist both in the local PostgreSQL from `docker-compose.yml`:
+
+```bash
+export PORTFOLIO_STORE="postgres"
+export DATABASE_URL="postgresql://peg:peg@localhost:5432/peg"
+```
+
+`DATABASE_URL` defaults to the compose credentials on `POSTGRES_PORT` (default `5432`). The `portfolios` and `enrichment_jobs` tables are created automatically on first use. The asset registry is still in memory.
+
+## Enrichment queue
+
+A syntactically valid ticker that no provider recognises at portfolio creation becomes `PENDING_ENRICHMENT` and gets an enrichment job. There is at most one active job per ticker, shared by every portfolio holding it. Processing a job retries the asset providers for that ticker:
+
+- resolved: the job is `completed`, the asset registry is updated, and every portfolio holding the ticker as pending gets the resolved asset (the portfolio becomes `ready` once nothing is pending or unsupported). Re-run graph sync to bring the new asset into Neo4j.
+- not resolved: the job goes back to `queued` with `last_error` until `ENRICHMENT_MAX_ATTEMPTS` (default 3), then `failed`. On the final attempt the asset becomes `UNSUPPORTED` only if every provider answered and none recognised the ticker; if a provider errored (network, missing `SEC_USER_AGENT`), the asset stays pending and a new portfolio holding it queues a fresh job.
+
+A claimed job carries a 10-minute lease, so a job left `processing` by a crashed worker becomes claimable again. With PostgreSQL, jobs are claimed with `FOR UPDATE SKIP LOCKED`, so several workers never process the same job.
+
+Process the queue on demand with `POST /api/v1/enrichment-jobs/process?limit=10`, or start a background worker with the app:
+
+```bash
+export ENRICHMENT_WORKER_INTERVAL_SECONDS="30"   # 0 (default) disables the worker
+export ENRICHMENT_WORKER_BATCH_SIZE="10"
+```
+
+Retries happen on each processing run; there is no backoff between attempts yet.
+
 Semantic extraction is optional. To use a local Ollama model:
 
 ```bash
@@ -103,12 +133,12 @@ From the repository root:
 ```bash
 source .venv/bin/activate
 pip install -r backend/requirements.txt
-docker compose up -d neo4j
+docker compose up -d neo4j        # add `postgres` when PORTFOLIO_STORE=postgres
 cd backend
 uvicorn app.main:app --reload
 ```
 
-Open the local web UI at `http://127.0.0.1:8000/`. The UI can create and graph-sync a portfolio, load promoted Supplier dependency paths, filter them by role/search text, and expand source-level SEC provenance. It also exposes an optional bounded dependency-enrichment pipeline; semantic extraction in that flow requires `SEMANTIC_PROVIDER=ollama`.
+Open the local web UI at `http://127.0.0.1:8000/`. The UI can create and graph-sync a portfolio, reopen saved portfolios, show each holding's resolution and enrichment status, process the enrichment queue (re-syncing the graph when a holding resolves), load promoted Supplier dependency paths, filter them by role/search text, and expand source-level SEC provenance. It also exposes an optional bounded dependency-enrichment pipeline; semantic extraction in that flow requires `SEMANTIC_PROVIDER=ollama`.
 
 Open API docs at `http://127.0.0.1:8000/docs`.
 
@@ -116,6 +146,11 @@ Useful endpoints include:
 
 ```text
 POST /api/v1/portfolios
+GET  /api/v1/portfolios?limit=50
+GET  /api/v1/portfolios/{portfolio_id}
+GET  /api/v1/enrichment-jobs?status=queued&limit=100
+GET  /api/v1/enrichment-jobs/{job_id}
+POST /api/v1/enrichment-jobs/process?limit=10
 GET  /api/v1/portfolios/{portfolio_id}/lookthrough
 POST /api/v1/portfolios/{portfolio_id}/graph/sync
 POST /api/v1/portfolios/{portfolio_id}/graph/company-metadata/sync?limit=25
@@ -136,6 +171,12 @@ cd backend
 python -m pytest
 ```
 
-Provider tests use mocks. The normal test suite does not require SEC, Alpha Vantage, Ollama, or a running Neo4j instance.
+Provider tests use mocks. The normal test suite does not require SEC, Alpha Vantage, Ollama, PostgreSQL, or a running Neo4j instance.
+
+PostgreSQL repository tests are skipped unless `TEST_DATABASE_URL` is set; each run uses a temporary schema that is dropped afterwards:
+
+```bash
+TEST_DATABASE_URL="postgresql://peg:peg@localhost:5432/peg" python -m pytest tests/test_postgres_*.py
+```
 
 See [`docs/graph-schema.md`](docs/graph-schema.md) and [`docs/mvp.md`](docs/mvp.md).

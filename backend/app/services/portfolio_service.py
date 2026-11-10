@@ -48,3 +48,6 @@ class PortfolioService:
 
     def get(self, portfolio_id: UUID) -> Portfolio | None:
         return self.repository.get(portfolio_id)
+
+    def list(self, limit: int = 50) -> list[Portfolio]:
+        return self.repository.list(limit=limit)

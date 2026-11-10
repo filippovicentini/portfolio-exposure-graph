@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from app.domain.enums import AssetStatus, AssetType
+from app.domain.enums import AssetStatus, AssetType, CandidateRole
 from app.domain.models import (
     CandidateEntityResolution,
     CandidateEntityResolutionSyncResult,
@@ -15,6 +15,8 @@ from app.domain.models import (
     CompanyMetadata,
     CompanyMetadataSyncResult,
     CompanyResolution,
+    DependencyExposureRow,
+    DependentCompanyExposure,
     EvidenceSemanticCandidateBatch,
     EvidenceSemanticCandidatesSyncResult,
     FilingEvidenceBatch,
@@ -23,6 +25,9 @@ from app.domain.models import (
     PortfolioDependencyPaths,
     PortfolioExposurePaths,
     PortfolioStructuralExposure,
+    PortfolioSupplierExposure,
+    RoleExposureItem,
+    SupplierExposureItem,
     SupplierIdentity,
 )
 from app.providers.base import (
@@ -549,6 +554,15 @@ class GraphService:
             ),
         )
 
+    def get_supplier_exposure(
+        self,
+        portfolio_id: UUID,
+    ) -> PortfolioSupplierExposure | None:
+        if self.portfolio_repository.get(portfolio_id) is None:
+            return None
+        rows = self.graph_repository.get_dependency_exposure_rows(portfolio_id)
+        return aggregate_supplier_exposure(portfolio_id, rows)
+
     def _resolve_companies(
         self,
         tickers: set[str],
@@ -583,3 +597,86 @@ class GraphService:
             )
 
         return resolutions, sorted(set(unresolved))
+
+
+def aggregate_supplier_exposure(
+    portfolio_id: UUID,
+    rows: list[DependencyExposureRow],
+) -> PortfolioSupplierExposure:
+    """Aggregate dependency rows by supplier and by role.
+
+    The unit of weight is a holding route to a company (e.g. NVDA held
+    directly, or NVDA inside QQQ): its sourced weight is added once to every
+    supplier, and once to every role, the company depends on. Routes are
+    disjoint slices of the portfolio, so summing them never double counts
+    within one supplier or role. Different suppliers and roles overlap.
+    """
+
+    def route_key(row: DependencyExposureRow) -> tuple[tuple[str, ...], str]:
+        return tuple(row.asset_path), row.company_cik
+
+    route_weights: dict[tuple[tuple[str, ...], str], float] = {}
+    suppliers: dict[str, dict] = {}
+    roles: dict[CandidateRole, dict] = {}
+
+    for row in rows:
+        key = route_key(row)
+        route_weights[key] = row.company_path_weight_pct
+
+        supplier = suppliers.setdefault(
+            row.supplier_id,
+            {"name": row.supplier_name, "routes": {}, "roles": set(), "companies": {}},
+        )
+        supplier["routes"][key] = row.company_path_weight_pct
+        supplier["roles"].update(row.roles)
+        company = supplier["companies"].setdefault(
+            row.company_cik, {"name": row.company_name, "routes": {}}
+        )
+        company["routes"][key] = row.company_path_weight_pct
+
+        for role in row.roles:
+            entry = roles.setdefault(role, {"routes": {}, "suppliers": set()})
+            entry["routes"][key] = row.company_path_weight_pct
+            entry["suppliers"].add(row.supplier_id)
+
+    def total(weights: dict) -> float:
+        return round(sum(weights.values()), 6)
+
+    supplier_items = [
+        SupplierExposureItem(
+            supplier_id=supplier_id,
+            supplier_name=data["name"],
+            weight_pct=total(data["routes"]),
+            roles=sorted(data["roles"], key=lambda role: role.value),
+            companies=sorted(
+                (
+                    DependentCompanyExposure(
+                        company_cik=cik,
+                        company_name=company["name"],
+                        weight_pct=total(company["routes"]),
+                    )
+                    for cik, company in data["companies"].items()
+                ),
+                key=lambda item: (-item.weight_pct, item.company_name),
+            ),
+        )
+        for supplier_id, data in suppliers.items()
+    ]
+    supplier_items.sort(key=lambda item: (-item.weight_pct, item.supplier_name))
+
+    role_items = [
+        RoleExposureItem(
+            role=role,
+            weight_pct=total(data["routes"]),
+            supplier_count=len(data["suppliers"]),
+        )
+        for role, data in roles.items()
+    ]
+    role_items.sort(key=lambda item: (-item.weight_pct, item.role.value))
+
+    return PortfolioSupplierExposure(
+        portfolio_id=portfolio_id,
+        suppliers=supplier_items,
+        roles=role_items,
+        dependency_coverage_pct=total(route_weights),
+    )

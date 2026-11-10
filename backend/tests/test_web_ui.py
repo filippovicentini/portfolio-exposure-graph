@@ -29,3 +29,11 @@ def test_web_ui_lists_saved_portfolios_and_enrichment_controls(client):
     assert "/enrichment-jobs/process?limit=10" in script
     # Components set display:grid/flex; the hidden attribute must still win.
     assert "[hidden] { display: none !important; }" in style
+
+
+def test_web_ui_shows_supplier_exposure(client):
+    page = client.get("/").text
+    script = client.get("/static/app.js").text
+
+    assert 'id="exposure-card"' in page
+    assert "/graph/supplier-exposure" in script

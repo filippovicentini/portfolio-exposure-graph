@@ -8,6 +8,7 @@ from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, Cand
 from app.domain.models import (
     AssetResolution,
     CandidateEntityResolutionTarget,
+    DependencyExposureRow,
     DependencyPath,
     DependencyProvenance,
     DependencyPromotionTarget,
@@ -306,6 +307,11 @@ class FakeGraphRepository(GraphRepository):
             )
         ][:limit]
 
+    def get_dependency_exposure_rows(
+        self, portfolio_id: UUID
+    ) -> list[DependencyExposureRow]:
+        return list(getattr(self, "dependency_exposure_rows", []))
+
     def get_industry_exposures(
         self, portfolio_id: UUID
     ) -> list[StructuralExposureItem]:
@@ -529,3 +535,42 @@ def test_graph_sync_and_paths_endpoints(client):
         "industry_basis": "SEC primary SIC",
         "country_basis": "SEC business address",
     }
+
+
+def test_supplier_exposure_endpoint(client):
+    created = client.post(
+        "/api/v1/portfolios",
+        json={"name": "Suppliers", "positions": [{"ticker": "NVDA", "weight_pct": 100}]},
+    ).json()
+    original_repository = graph_service.graph_repository
+    fake = FakeGraphRepository()
+    fake.dependency_exposure_rows = [
+        DependencyExposureRow(
+            asset_path=["NVDA"],
+            company_cik="0001045810",
+            company_name="NVIDIA CORP",
+            supplier_id="supplier:tsmc",
+            supplier_name="TSMC",
+            roles=[CandidateRole.FOUNDRY],
+            company_path_weight_pct=100.0,
+        )
+    ]
+    graph_service.graph_repository = fake
+    try:
+        response = client.get(
+            f"/api/v1/portfolios/{created['portfolio_id']}/graph/supplier-exposure"
+        )
+        missing = client.get(
+            "/api/v1/portfolios/00000000-0000-0000-0000-000000000000"
+            "/graph/supplier-exposure"
+        )
+    finally:
+        graph_service.graph_repository = original_repository
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["suppliers"][0]["supplier_name"] == "TSMC"
+    assert body["suppliers"][0]["weight_pct"] == 100.0
+    assert body["roles"][0] == {"role": "foundry", "weight_pct": 100.0, "supplier_count": 1}
+    assert body["dependency_coverage_pct"] == 100.0
+    assert missing.status_code == 404

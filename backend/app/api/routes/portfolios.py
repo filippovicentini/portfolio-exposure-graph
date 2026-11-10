@@ -17,6 +17,7 @@ from app.domain.models import (
     PortfolioExposurePaths,
     PortfolioLookthrough,
     PortfolioStructuralExposure,
+    PortfolioSupplierExposure,
 )
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
@@ -191,6 +192,19 @@ def get_portfolio_structural_exposure(
     portfolio_id: UUID,
 ) -> PortfolioStructuralExposure:
     result = graph_service.get_structural_exposure(portfolio_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.get(
+    "/{portfolio_id}/graph/supplier-exposure",
+    response_model=PortfolioSupplierExposure,
+)
+def get_portfolio_supplier_exposure(
+    portfolio_id: UUID,
+) -> PortfolioSupplierExposure:
+    result = graph_service.get_supplier_exposure(portfolio_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     return result

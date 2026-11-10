@@ -426,6 +426,62 @@ class PortfolioDependencyPaths(BaseModel):
     )
 
 
+class DependencyExposureRow(BaseModel):
+    """One holding route reaching one company that depends on one supplier.
+
+    Only promoted DEPENDS_ON edges with verifiable provenance are included,
+    the same set the dependency-path API returns.
+    """
+
+    asset_path: list[str] = Field(min_length=1)
+    company_cik: str = Field(min_length=1, max_length=10)
+    company_name: str = Field(min_length=1)
+    supplier_id: str = Field(min_length=1)
+    supplier_name: str = Field(min_length=1)
+    roles: list[CandidateRole] = Field(min_length=1)
+    company_path_weight_pct: float = Field(ge=0)
+
+
+class DependentCompanyExposure(BaseModel):
+    company_cik: str = Field(min_length=1, max_length=10)
+    company_name: str = Field(min_length=1)
+    weight_pct: float = Field(ge=0)
+
+
+class SupplierExposureItem(BaseModel):
+    supplier_id: str = Field(min_length=1)
+    supplier_name: str = Field(min_length=1)
+    weight_pct: float = Field(ge=0)
+    roles: list[CandidateRole] = Field(min_length=1)
+    companies: list[DependentCompanyExposure] = Field(min_length=1)
+
+
+class RoleExposureItem(BaseModel):
+    role: CandidateRole
+    weight_pct: float = Field(ge=0)
+    supplier_count: int = Field(ge=1)
+
+
+class PortfolioSupplierExposure(BaseModel):
+    portfolio_id: UUID
+    suppliers: list[SupplierExposureItem] = Field(default_factory=list)
+    roles: list[RoleExposureItem] = Field(default_factory=list)
+    dependency_coverage_pct: float = Field(ge=0)
+    weight_basis: str = (
+        "Sourced portfolio / one-level look-through weight reaching companies that "
+        "depend on the supplier (or on a supplier in the role); each holding route "
+        "to a company is counted once per supplier or role"
+    )
+    dependency_basis: str = (
+        "Qualitative evidence-backed DEPENDS_ON; no numeric supplier impact is inferred"
+    )
+    overlap_basis: str = (
+        "A company usually depends on several suppliers, so supplier and role "
+        "weights overlap and can sum to more than 100%; the dependency coverage "
+        "figure counts each holding route once"
+    )
+
+
 class StructuralExposureItem(BaseModel):
     code: str = Field(min_length=1)
     name: str = Field(min_length=1)

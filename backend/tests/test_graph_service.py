@@ -7,6 +7,7 @@ from app.domain.enums import AssetStatus, AssetType, CandidateRelationType, Cand
 from app.domain.models import (
     AssetResolution,
     CandidateEntityResolutionTarget,
+    DependencyExposureRow,
     DependencyPath,
     DependencyProvenance,
     DependencyPromotionTarget,
@@ -370,6 +371,11 @@ class FakeGraphRepository(GraphRepository):
             ),
         ]
         return paths[:limit]
+
+    def get_dependency_exposure_rows(
+        self, portfolio_id: UUID
+    ) -> list[DependencyExposureRow]:
+        return list(getattr(self, "dependency_exposure_rows", []))
 
     def get_industry_exposures(
         self, portfolio_id: UUID

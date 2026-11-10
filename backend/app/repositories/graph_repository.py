@@ -12,6 +12,7 @@ from app.domain.models import (
     CompanyMetadata,
     CompanyMetadataTarget,
     CompanyResolution,
+    DependencyExposureRow,
     DependencyPath,
     DependencyPromotionRejection,
     DependencyPromotionTarget,
@@ -145,6 +146,14 @@ class GraphRepository(ABC):
         portfolio_id: UUID,
         limit: int,
     ) -> list[DependencyPath]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_dependency_exposure_rows(
+        self,
+        portfolio_id: UUID,
+    ) -> list[DependencyExposureRow]:
+        """Every holding route x company x promoted supplier, unbounded."""
         raise NotImplementedError
 
     @abstractmethod

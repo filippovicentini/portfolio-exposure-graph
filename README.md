@@ -114,7 +114,7 @@ export ENRICHMENT_WORKER_INTERVAL_SECONDS="30"   # 0 (default) disables the work
 export ENRICHMENT_WORKER_BATCH_SIZE="10"
 ```
 
-Retries happen on each processing run; there is no backoff between attempts yet.
+A requeued job waits before its next attempt: the delay starts at `ENRICHMENT_RETRY_BASE_SECONDS` (default 60) and doubles per attempt, capped at `ENRICHMENT_RETRY_MAX_SECONDS` (default 3600). With the defaults, the second attempt happens at least 1 minute after the first and the third at least 2 minutes after the second, so a short provider outage does not use up every attempt. The job's `next_attempt_at` shows when it becomes due; processing runs before then skip it.
 
 Semantic extraction is optional. To use a local Ollama model:
 

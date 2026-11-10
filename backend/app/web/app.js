@@ -242,7 +242,10 @@ function renderHoldings() {
     if (job && asset.status !== "ready") {
       const attempts = `${job.attempts} attempt${job.attempts === 1 ? "" : "s"}`;
       const error = job.last_error ? ` · ${job.last_error}` : "";
-      jobLine = `<div class="holding-job${job.status === "failed" ? " error" : ""}">Enrichment ${escapeHtml(job.status)} · ${escapeHtml(attempts)}${escapeHtml(error)}</div>`;
+      const retry = job.status === "queued" && job.next_attempt_at
+        ? ` · next retry ${formatDate(job.next_attempt_at)}`
+        : "";
+      jobLine = `<div class="holding-job${job.status === "failed" ? " error" : ""}">Enrichment ${escapeHtml(job.status)} · ${escapeHtml(attempts)}${escapeHtml(retry)}${escapeHtml(error)}</div>`;
     }
     return `
       <div class="holding-row">
@@ -269,10 +272,14 @@ async function processEnrichmentQueue() {
     setBusy(true, "Processing enrichment…");
     addLog("Processing enrichment queue…", "running");
     const result = await requestJson(`${API_PREFIX}/enrichment-jobs/process?limit=10`, { method: "POST" });
-    addLog(
-      `Enrichment: ${result.jobs_completed} resolved, ${result.jobs_requeued} requeued, ${result.jobs_failed} failed.`,
-      result.jobs_failed ? "error" : result.jobs_completed ? "success" : "running",
-    );
+    if (!result.jobs_claimed) {
+      addLog("No enrichment jobs are due yet; queued jobs wait for their next retry time.", "running");
+    } else {
+      addLog(
+        `Enrichment: ${result.jobs_completed} resolved, ${result.jobs_requeued} requeued, ${result.jobs_failed} failed.`,
+        result.jobs_failed ? "error" : result.jobs_completed ? "success" : "running",
+      );
+    }
 
     const portfolio = await loadPortfolioDetails(id);
     const newlyReady = (portfolio?.positions || [])

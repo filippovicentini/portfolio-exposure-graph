@@ -81,6 +81,8 @@ class EnrichmentJob(BaseModel):
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
     claimed_at: datetime | None = None
+    # Earliest time a requeued job may be claimed again (retry backoff).
+    next_attempt_at: datetime | None = None
     resolved_asset_type: AssetType | None = None
 
 

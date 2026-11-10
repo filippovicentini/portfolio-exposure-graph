@@ -108,4 +108,6 @@ enrichment_service = EnrichmentService(
     asset_resolver=asset_resolver,
     portfolio_repository=portfolio_repository,
     max_attempts=settings.enrichment_max_attempts,
+    retry_base_seconds=settings.enrichment_retry_base_seconds,
+    retry_max_seconds=settings.enrichment_retry_max_seconds,
 )

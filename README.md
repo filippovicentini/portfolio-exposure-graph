@@ -1,224 +1,166 @@
 # Portfolio Exposure Graph
 
 [![CI](https://github.com/filippovicentini/portfolio-exposure-graph/actions/workflows/ci.yml/badge.svg)](https://github.com/filippovicentini/portfolio-exposure-graph/actions/workflows/ci.yml)
+![Python 3.11–3.13](https://img.shields.io/badge/python-3.11%E2%80%933.13-blue)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A small, explainable portfolio intelligence application that reveals direct and indirect economic exposures hidden behind a list of holdings.
+**What am I actually exposed to, and through which paths?**
 
-The product question is intentionally narrow:
-
-> **What am I actually exposed to, and through which paths?**
+A list of holdings hides most of a portfolio's real exposure: ETF look-through, the industries and countries behind each company, and the suppliers those companies depend on. Portfolio Exposure Graph builds that picture as a knowledge graph from primary sources, mainly SEC EDGAR filings. Every edge it shows can be traced back to the document it came from.
 
 > **Not investment advice.** This project is a research and engineering showcase. Its output describes sourced structural exposures; it is not financial, investment, legal or tax advice, and it must not be relied on to make investment decisions. Data comes from third-party sources (SEC EDGAR, Alpha Vantage) and may be incomplete, delayed or wrong.
 
-## Status
+## What it shows
 
-Implemented:
+Take a portfolio of **80% NVIDIA (NVDA) and 20% TSMC (TSM)**.
 
-- installable Python package with a `peg serve` command (FastAPI API + web UI)
-- portfolio weight validation
-- dynamic equity resolution through SEC ticker data
-- dynamic US ETF recognition through Alpha Vantage listing data
-- ETF holdings ingestion and one-level look-through
-- direct + indirect exposure aggregation
-- Neo4j local infrastructure
-- Neo4j graph repository for portfolio, ETF, asset, and canonical company paths
-- SEC-backed `Asset -> Company` canonicalization keyed by CIK
-- SEC submissions metadata for primary SIC industry and business-address country
-- `Company -> Industry` and `Company -> Country` structural graph edges
-- portfolio-weight aggregation by SEC primary industry and business-address country
-- bounded SEC 10-K/10-Q filing metadata ingestion into canonical Filing nodes
-- deterministic filing evidence extraction into provenance-preserving Evidence nodes
-- semantic relationship-candidate graph plumbing from Evidence, with provider abstraction and no automatic dependency promotion
-- optional local Ollama semantic extraction with structured JSON output and deterministic post-validation
-- deterministic candidate-entity resolution into internal canonical `Supplier` identities with evidence-derived aliases
-- deterministic promotion of fully resolved, source-verifiable candidates into qualitative `Company -> DEPENDS_ON -> Supplier` edges with graph-linked provenance
-- bounded portfolio dependency-path API with direct/ETF routes and source-level provenance
-- supplier and role exposure aggregation: portfolio/look-through weight reaching companies that depend on each promoted Supplier or supplier role, with dependency coverage
-- deterministic Supplier -> SEC Company linking (`IDENTIFIED_AS`) and supplier exposure that reports how much of a supplier the portfolio already holds
-- local web UI for creating/syncing portfolios and inspecting Supplier dependency paths with expandable SEC provenance
-- optional PostgreSQL persistence for portfolios, the asset registry, and the enrichment queue (`PORTFOLIO_STORE=postgres`), with portfolio listing
-- enrichment-queue processing for unseen tickers: bounded API endpoint or opt-in background worker, with retries, leases, and portfolio updates
-- mocked provider/repository tests that do not require external services
+NVIDIA's FY2026 10-K names its key suppliers in one paragraph:
 
-Next milestones:
+> We utilize foundries, such as Taiwan Semiconductor Manufacturing Company Limited, or TSMC, and Samsung Electronics Co., Ltd., or Samsung, to produce our semiconductor wafers. We purchase memory from SK Hynix Inc., Micron Technology, Inc., and Samsung. […] We engage with independent subcontractors and contract manufacturers such as Hon Hai Precision Industry Co., Ltd., Wistron Corporation, and Fabrinet to perform assembly, testing and packaging of our final products.
+>
+> — NVIDIA Corp., Form 10-K filed 2026-02-25 (accession 0001045810-26-000021)
 
-- non-SEC identifiers (e.g. LEI) for Suppliers that are not SEC registrants
-- improve local setup
+From that, the graph answers questions a holdings list cannot:
 
-Out of scope for the MVP: price prediction, trading recommendations, portfolio optimization, broker integration, and real-time market data.
+- **80% of the portfolio reaches companies that depend on TSMC**, as a foundry, through NVIDIA.
+- **TSMC is also held directly at 20%.** The portfolio is concentrated on TSMC from two directions, and a plain holdings list shows only one of them.
+- **Which suppliers are SEC registrants:** TSMC, SK hynix, Micron and Fabrinet are linked to their SEC CIKs. Samsung, Hon Hai and Wistron are not SEC registrants and stay unlinked rather than being matched by guesswork.
 
-## Architecture today
+![Supplier exposure for 80% NVDA + 20% TSM](docs/images/supplier-exposure.png)
+
+*Supplier exposure in the web UI. Portfolio resolution, SEC company data and supplier-to-SEC-company linking come from a live run against SEC EDGAR. For this screenshot the seven `DEPENDS_ON` edges were entered from the verbatim 10-K paragraph above, because the LLM extraction step that normally proposes them was not run.*
+
+## How it works
+
+```mermaid
+flowchart LR
+    P[Portfolio<br/>tickers + weights] --> R[Resolve<br/>SEC tickers · ETFs]
+    R --> G[Graph<br/>Asset → Company by CIK<br/>ETF look-through]
+    G --> M[SEC metadata<br/>industry · country]
+    G --> F[SEC 10-K / 10-Q]
+    F --> E[Evidence<br/>source excerpts]
+    E --> C[Candidates<br/>local LLM + validation]
+    C --> D[DEPENDS_ON<br/>promoted, with provenance]
+    D --> L[Supplier ↔ SEC company]
+    M --> X[(Industry / country exposure)]
+    D --> Y[(Dependency paths<br/>Supplier exposure)]
+    L --> Y
+```
+
+The graph lives in Neo4j:
 
 ```text
-Portfolio
-  |-- OWNS --> Equity Asset -- REPRESENTS --> Company
-  |                                      |-- OPERATES_IN --> Industry
-  |                                      |-- BASED_IN ----> Country
-  |                                      `-- DEPENDS_ON --> Supplier
-  `-- OWNS --> ETF
-                 `-- HOLDS --> Equity Asset -- REPRESENTS --> Company
-                                                     |-- OPERATES_IN --> Industry
-                                                     |-- BASED_IN ----> Country
-                                                     `-- DEPENDS_ON --> Supplier
+Portfolio -OWNS-> Asset -REPRESENTS-> Company -DEPENDS_ON-> Supplier -IDENTIFIED_AS-> Company
+          -OWNS-> ETF -HOLDS-> Asset              -OPERATES_IN-> Industry
+                                                  -BASED_IN-> Country
+Company -FILED-> Filing -CONTAINS_EVIDENCE-> Evidence -SUPPORTS_CANDIDATE-> RelationshipCandidate -RESOLVES_TO-> Supplier
 ```
 
-Listed instruments remain `Asset` nodes because the same economic company can be represented by more than one security. When SEC ticker data provides a CIK, the graph creates one canonical `Company` node keyed by that CIK and links the asset with `REPRESENTS`. ETF constituents that cannot be resolved to a canonical company remain valid `Asset` nodes and are reported by graph sync.
+Each step is a separate, bounded, re-runnable API call; the web UI can run them in order. Details: [`docs/pipeline.md`](docs/pipeline.md) and [`docs/graph-schema.md`](docs/graph-schema.md).
 
-Company metadata enrichment is a separate bounded step. It reads the SEC submissions JSON for canonical companies and stores the SEC primary SIC classification as `OPERATES_IN` plus the SEC business-address country as `BASED_IN`. These are structural facts, not numeric exposure weights. The endpoint defaults to 25 companies per call so large ETFs do not trigger hundreds of SEC requests in one synchronous request.
+## Design decisions
 
-SEC filing ingestion is also bounded and currently stores only recent `10-K` and `10-Q` metadata. Each filing is a canonical `Filing` node keyed by SEC accession number and linked from its canonical company with `FILED`. The node keeps the filing date, report date, form, primary-document URL, filing-index URL, and submissions source URL.
+**Provenance is mandatory.** A `DEPENDS_ON` edge exists only if its graph path leads back to a specific filing, excerpt and candidate. The dependency-path API returns that provenance with every path, and the UI links to the SEC source.
 
-Filing evidence extraction is a separate bounded step. It downloads stored SEC primary-document URLs and records conservative dependency-related excerpts as `Evidence` nodes linked with `CONTAINS_EVIDENCE`. Extraction is deterministic keyword matching (`sec_html_dependency_keywords_v3`), not an AI judgment. An evidence node is only a source excerpt/candidate and does not create or imply a `DEPENDS_ON` relationship.
+**The LLM proposes, deterministic code decides.** A local model (Ollama, constrained JSON output) only proposes relationship candidates. Before anything becomes a graph fact:
+- the mentioned supplier must appear verbatim in the supporting text;
+- the supporting text must appear verbatim in the source excerpt;
+- the excerpt must belong to the same company's filing.
 
-The next graph layer stores structured `RelationshipCandidate` nodes linked from source evidence with `SUPPORTS_CANDIDATE`. An optional local Ollama provider can populate these candidates from Evidence using constrained JSON output plus deterministic validation of verbatim mentions and supporting text. If no semantic provider is configured, targets remain unresolved and are not marked as processed. Candidate mentions can then be resolved deterministically into internal canonical `Supplier` identities through `RESOLVES_TO`. Explicit filing aliases such as `Samsung Electronics Co., Ltd., or Samsung` are preserved and reused; exact aliases already known in the graph are reused conservatively. A resolved candidate still is not trusted by itself; a separate bounded promotion step re-validates source spans and Supplier aliases before creating a qualitative, provenance-linked `DEPENDS_ON` edge.
+A hallucinated supplier or quote is rejected rather than stored.
 
-The dependency-path API traverses portfolio holdings through canonical companies to promoted Suppliers and returns the source provenance required to explain each dependency. `company_path_weight_pct` is only the sourced direct or one-level ETF look-through weight reaching the dependent Company. It is not a supplier-dependency percentage, and `DEPENDS_ON` adds no numeric multiplier.
+**No invented numbers.** The only numeric weights are sourced ones: portfolio weights, and ETF holding weights for look-through. A supplier's weight means "portfolio weight reaching companies that depend on it". It is not an estimate of revenue share or impact, and the exposure responses state their basis explicitly. Supplier weights overlap and can sum to more than 100%; a separate coverage figure counts each holding route once.
 
-Supplier exposure aggregates the same promoted, provenance-backed dependencies as the dependency-path API, without its limit. The unit is a holding route to a company (NVDA held directly, or NVDA inside QQQ): its sourced weight is added once to every Supplier, and once to every supplier role, that the company depends on. A Supplier's weight therefore means "portfolio/look-through weight reaching companies that depend on this Supplier". Because a company usually depends on several suppliers, supplier and role weights overlap and can sum to more than 100%. `dependency_coverage_pct` counts each route once. As with dependency paths, no numeric supplier impact is inferred.
+**Conservative entity resolution.** Suppliers are linked to SEC companies only by exact match after normalizing case, punctuation and legal forms ("Company Limited" equals "CO LTD"). Short acronyms such as "TSMC" are never used for linking, and names that point at more than one company are reported as ambiguous. An unlinked supplier is a correct answer, not a failure.
 
-Suppliers linked to an SEC registrant (see `docs/graph-schema.md`) also report `held_weight_pct`: the sourced portfolio/look-through weight already held in the supplier itself. For example, a portfolio of 80% NVDA and 20% TSM depends on TSMC through NVIDIA and also holds TSMC directly at 20%: a concentration a plain holdings list does not show.
+**Failure-tolerant ingestion.** Unknown tickers do not block portfolio creation; they go to an enrichment queue with:
+- retries and exponential backoff;
+- leases, so a crashed worker's job is picked up again;
+- `FOR UPDATE SKIP LOCKED` on PostgreSQL, so several workers never take the same job.
 
-Structural exposure aggregation reuses only sourced numeric weights already present on `OWNS` and `HOLDS`. An industry bucket therefore means "portfolio/look-through weight whose canonical company has this SEC primary SIC". A country bucket means "portfolio/look-through weight whose canonical company has this SEC business-address country". It is not a revenue-by-country estimate, and no numeric weight is inferred from `OPERATES_IN` or `BASED_IN` themselves. Coverage fields report how much portfolio/look-through weight currently has metadata for each dimension.
+A provider outage is never recorded as "this ticker does not exist".
 
-## Environment
+## Quickstart
 
-External provider credentials are read from environment variables:
-
-```bash
-export SEC_USER_AGENT="Portfolio Exposure Graph your-email@example.com"
-export ALPHA_VANTAGE_API_KEY="..."
-```
-
-Neo4j defaults match the local `docker-compose.yml`, and can be overridden:
-
-```bash
-export NEO4J_URI="bolt://localhost:7687"
-export NEO4J_USER="neo4j"
-export NEO4J_PASSWORD="portfolioexposure"
-export NEO4J_DATABASE="neo4j"
-```
-
-Portfolios, the asset registry, and enrichment jobs are kept in memory by default and are lost when the server restarts. To persist them in the local PostgreSQL from `docker-compose.yml`:
-
-```bash
-export PORTFOLIO_STORE="postgres"
-export DATABASE_URL="postgresql://peg:peg@localhost:5432/peg"
-```
-
-`DATABASE_URL` defaults to the compose credentials on `POSTGRES_PORT` (default `5432`). The `portfolios`, `assets`, and `enrichment_jobs` tables are created automatically on first use. The registry's development seeds (NVDA, MSFT) are inserted once and never overwrite a stored asset.
-
-## Enrichment queue
-
-A syntactically valid ticker that no provider recognises at portfolio creation becomes `PENDING_ENRICHMENT` and gets an enrichment job. There is at most one active job per ticker, shared by every portfolio holding it. Processing a job retries the asset providers for that ticker:
-
-- resolved: the job is `completed`, the asset registry is updated, and every portfolio holding the ticker as pending gets the resolved asset (the portfolio becomes `ready` once nothing is pending or unsupported). Re-run graph sync to bring the new asset into Neo4j.
-- a ticker previously marked `UNSUPPORTED` is not trusted forever: when a new portfolio holds it, it becomes pending again and gets a fresh job, which upgrades every portfolio holding it if a provider now recognises it.
-- not resolved: the job goes back to `queued` with `last_error` until `ENRICHMENT_MAX_ATTEMPTS` (default 3), then `failed`. On the final attempt the asset becomes `UNSUPPORTED` only if every provider answered and none recognised the ticker; if a provider errored (network, missing `SEC_USER_AGENT`), the asset stays pending and a new portfolio holding it queues a fresh job.
-
-A claimed job carries a 10-minute lease, so a job left `processing` by a crashed worker becomes claimable again. With PostgreSQL, jobs are claimed with `FOR UPDATE SKIP LOCKED`, so several workers never process the same job.
-
-Process the queue on demand with `POST /api/v1/enrichment-jobs/process?limit=10`, or start a background worker with the app:
-
-```bash
-export ENRICHMENT_WORKER_INTERVAL_SECONDS="30"   # 0 (default) disables the worker
-export ENRICHMENT_WORKER_BATCH_SIZE="10"
-```
-
-A requeued job waits before its next attempt: the delay starts at `ENRICHMENT_RETRY_BASE_SECONDS` (default 60) and doubles per attempt, capped at `ENRICHMENT_RETRY_MAX_SECONDS` (default 3600). With the defaults, the second attempt happens at least 1 minute after the first and the third at least 2 minutes after the second, so a short provider outage does not use up every attempt. The job's `next_attempt_at` shows when it becomes due; processing runs before then skip it.
-
-Semantic extraction is optional. To use a local Ollama model:
-
-```bash
-export SEMANTIC_PROVIDER="ollama"
-export OLLAMA_BASE_URL="http://localhost:11434"
-export OLLAMA_MODEL="qwen3:4b-instruct"
-```
-
-With `SEMANTIC_PROVIDER` unset, the rest of the application still works and semantic-candidate Evidence remains available for later processing. Ollama is contacted only when the semantic-candidate sync endpoint is called.
-
-## Install
-
-The project is a Python package (`portfolio-exposure-graph`, Python 3.11+) with a `peg` command. Install it from GitHub:
+Requires Python 3.11+ and Docker (for Neo4j). From a clone, `docker compose up -d neo4j` starts the same Neo4j (and `postgres` if needed).
 
 ```bash
 pip install "portfolio-exposure-graph @ git+https://github.com/filippovicentini/portfolio-exposure-graph"
 ```
 
-Optional extras:
-
-- `postgres`: PostgreSQL persistence (`PORTFOLIO_STORE=postgres`), e.g. `pip install "portfolio-exposure-graph[postgres] @ git+https://github.com/filippovicentini/portfolio-exposure-graph"`
-- `dev`: the test runner
-
-For development, from a clone:
-
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[postgres,dev]"
+docker run -d --name peg-neo4j -p 7474:7474 -p 7687:7687 -e NEO4J_AUTH=neo4j/portfolioexposure neo4j:5.26-community
 ```
 
-## Run locally
-
-Start Neo4j (and PostgreSQL if you use `PORTFOLIO_STORE=postgres`) from the repository root, then the app:
-
 ```bash
-docker compose up -d neo4j
+export SEC_USER_AGENT="Portfolio Exposure Graph your-email@example.com"
 ```
 
 ```bash
 peg serve
 ```
 
-`peg serve` takes `--host` (default `127.0.0.1`), `--port` (default `8000`) and `--reload`; `python -m portfolio_exposure_graph serve` is equivalent. Configuration comes from the environment variables above.
+Open `http://127.0.0.1:8000/` for the web UI and `http://127.0.0.1:8000/docs` for the API.
 
-Open the local web UI at `http://127.0.0.1:8000/`. The UI can create and graph-sync a portfolio, reopen saved portfolios, show each holding's resolution and enrichment status, process the enrichment queue (re-syncing the graph when a holding resolves), load promoted Supplier dependency paths, filter them by role/search text, and expand source-level SEC provenance. It also exposes an optional bounded dependency-enrichment pipeline; semantic extraction in that flow requires `SEMANTIC_PROVIDER=ollama`.
+- `SEC_USER_AGENT` is required by SEC EDGAR's fair-access policy: a contact address for your requests.
+- ETF recognition needs `ALPHA_VANTAGE_API_KEY`.
+- LLM extraction needs a local Ollama (`SEMANTIC_PROVIDER=ollama`).
+- Install the `postgres` extra and set `PORTFOLIO_STORE=postgres` to keep portfolios across restarts.
 
-Open API docs at `http://127.0.0.1:8000/docs`.
+All settings: [`docs/configuration.md`](docs/configuration.md).
 
-Useful endpoints include:
+## API
 
-```text
-POST /api/v1/portfolios
-GET  /api/v1/portfolios?limit=50
-GET  /api/v1/portfolios/{portfolio_id}
-GET  /api/v1/enrichment-jobs?status=queued&limit=100
-GET  /api/v1/enrichment-jobs/{job_id}
-POST /api/v1/enrichment-jobs/process?limit=10
-GET  /api/v1/portfolios/{portfolio_id}/lookthrough
-POST /api/v1/portfolios/{portfolio_id}/graph/sync
-POST /api/v1/portfolios/{portfolio_id}/graph/company-metadata/sync?limit=25
-POST /api/v1/portfolios/{portfolio_id}/graph/sec-filings/sync?company_limit=5&filings_per_company=4
-POST /api/v1/portfolios/{portfolio_id}/graph/filing-evidence/sync?filing_limit=4&evidence_per_filing=5
-POST /api/v1/portfolios/{portfolio_id}/graph/evidence-semantic-candidates/sync?evidence_limit=10&candidates_per_evidence=5
-POST /api/v1/portfolios/{portfolio_id}/graph/candidate-entities/sync?candidate_limit=25
-POST /api/v1/portfolios/{portfolio_id}/graph/evidence-backed-dependencies/sync?candidate_limit=25
-GET  /api/v1/portfolios/{portfolio_id}/graph/paths
-GET  /api/v1/portfolios/{portfolio_id}/graph/dependency-paths?limit=100
-GET  /api/v1/portfolios/{portfolio_id}/graph/structural-exposure
-POST /api/v1/portfolios/{portfolio_id}/graph/supplier-companies/sync?limit=50
-GET  /api/v1/portfolios/{portfolio_id}/graph/supplier-exposure
+| Area | Endpoints |
+|---|---|
+| Portfolios | `POST /api/v1/portfolios`, `GET /api/v1/portfolios`, `GET /api/v1/portfolios/{id}`, `GET …/{id}/lookthrough` |
+| Graph build | `POST …/{id}/graph/sync`, `…/graph/company-metadata/sync`, `…/graph/sec-filings/sync`, `…/graph/filing-evidence/sync` |
+| Dependencies | `POST …/{id}/graph/evidence-semantic-candidates/sync`, `…/graph/candidate-entities/sync`, `…/graph/evidence-backed-dependencies/sync`, `…/graph/supplier-companies/sync` |
+| Exposure | `GET …/{id}/graph/paths`, `…/graph/dependency-paths`, `…/graph/structural-exposure`, `…/graph/supplier-exposure` |
+| Enrichment queue | `GET /api/v1/enrichment-jobs`, `GET /api/v1/enrichment-jobs/{job_id}`, `POST /api/v1/enrichment-jobs/process` |
+
+`…/{id}` stands for `/api/v1/portfolios/{id}`. Sync endpoints take `limit`-style parameters that bound the work done per call; the interactive docs at `/docs` list them all.
+
+## Development
+
+```bash
+git clone https://github.com/filippovicentini/portfolio-exposure-graph
 ```
 
-## Test
+```bash
+cd portfolio-exposure-graph && python -m venv .venv && source .venv/bin/activate
+```
+
+```bash
+pip install -e ".[postgres,dev]"
+```
 
 ```bash
 python -m pytest
 ```
 
-Provider tests use mocks. The normal test suite does not require SEC, Alpha Vantage, Ollama, PostgreSQL, or a running Neo4j instance.
-
-CI (GitHub Actions) runs on every pull request and push to `main`:
-
-- the full suite on Python 3.11, 3.12 and 3.13, against a PostgreSQL 16 service, so the PostgreSQL tests run there too, plus a syntax check of the web UI script;
-- a packaging check that builds the wheel, installs it in a clean virtualenv without extras, and serves the API and web UI from the installed package.
-
-Locally, PostgreSQL repository tests are skipped unless `TEST_DATABASE_URL` is set; each run uses a temporary schema that is dropped afterwards:
+The test suite needs no network, SEC, Alpha Vantage, Ollama or Neo4j: providers are mocked and the Neo4j repository is tested against a fake driver. PostgreSQL store tests run when `TEST_DATABASE_URL` is set, each in a temporary schema:
 
 ```bash
-TEST_DATABASE_URL="postgresql://peg:peg@localhost:5432/peg" python -m pytest tests/test_postgres_*.py
+TEST_DATABASE_URL="postgresql://peg:peg@localhost:5432/peg" python -m pytest
 ```
 
-See [`docs/graph-schema.md`](docs/graph-schema.md) and [`docs/mvp.md`](docs/mvp.md).
+CI runs on every pull request and push to `main`:
+
+- the full suite on Python 3.11, 3.12 and 3.13, against PostgreSQL 16;
+- a packaging job that builds the wheel, installs it in a clean virtualenv and serves the app from it.
+
+Layout: `src/portfolio_exposure_graph/` (`providers/` for external data sources, `repositories/` for Neo4j and PostgreSQL storage, `services/` for pipeline logic, `api/` for FastAPI routes, `web/` for the UI), `tests/`, `docs/`.
+
+## Limitations
+
+- Look-through is one ETF level deep; ETF holdings come from Alpha Vantage.
+- Only US-listed instruments, via SEC ticker data.
+- Dependency evidence comes from recent 10-K and 10-Q filings and keyword-selected excerpts, so suppliers a filing never names are invisible.
+- Suppliers that are not SEC registrants (e.g. Samsung, Hon Hai) are not linked to a company. Another identifier source, such as LEI, would be needed.
+- Weights are structural, not economic: no revenue share, impact or risk numbers are inferred.
+
+Out of scope by design: price prediction, trading recommendations, portfolio optimization, broker integration and real-time market data. See [`docs/mvp.md`](docs/mvp.md).
 
 ## License
 

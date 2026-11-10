@@ -53,7 +53,10 @@ def setup():
     queue = InMemoryEnrichmentQueue()
     portfolios = InMemoryPortfolioRepository()
     portfolio_service = PortfolioService(portfolios, resolver, queue)
-    service = EnrichmentService(queue, resolver, portfolios, max_attempts=2)
+    # No backoff here: these tests exercise the job lifecycle; backoff has its own tests.
+    service = EnrichmentService(
+        queue, resolver, portfolios, max_attempts=2, retry_base_seconds=0
+    )
     return provider, registry, queue, portfolios, portfolio_service, service
 
 
@@ -290,6 +293,79 @@ def test_worker_start_and_stop(setup):
         worker.stop()
 
     assert queue.list()[0].status == EnrichmentJobStatus.COMPLETED
+
+
+# --- backoff ---------------------------------------------------------------
+
+
+def test_claim_skips_queued_jobs_not_yet_due():
+    queue = InMemoryEnrichmentQueue()
+    now = datetime.now(timezone.utc)
+    later = queue.enqueue("LATER")
+    queue.save(later.model_copy(update={"next_attempt_at": now + timedelta(minutes=5)}))
+    due = queue.enqueue("DUE")
+    queue.save(due.model_copy(update={"next_attempt_at": now - timedelta(seconds=1)}))
+
+    assert [job.ticker for job in queue.claim(limit=10)] == ["DUE"]
+
+
+def test_retry_delay_doubles_and_is_capped():
+    service = EnrichmentService(
+        InMemoryEnrichmentQueue(),
+        AssetResolver(InMemoryAssetRegistry()),
+        InMemoryPortfolioRepository(),
+        retry_base_seconds=60,
+        retry_max_seconds=200,
+    )
+
+    assert [service.retry_delay(n).total_seconds() for n in (1, 2, 3, 4)] == [
+        60,
+        120,
+        200,
+        200,
+    ]
+
+
+def test_retry_delay_settings_are_validated():
+    args = (
+        InMemoryEnrichmentQueue(),
+        AssetResolver(InMemoryAssetRegistry()),
+        InMemoryPortfolioRepository(),
+    )
+    with pytest.raises(ValueError):
+        EnrichmentService(*args, retry_base_seconds=-1)
+    with pytest.raises(ValueError):
+        EnrichmentService(*args, retry_base_seconds=100, retry_max_seconds=10)
+
+
+def test_requeued_job_waits_for_backoff_before_next_attempt():
+    provider = SwitchableProvider()
+    resolver = AssetResolver(InMemoryAssetRegistry(), providers=[provider])
+    queue = InMemoryEnrichmentQueue()
+    service = EnrichmentService(
+        queue,
+        resolver,
+        InMemoryPortfolioRepository(),
+        max_attempts=3,
+        retry_base_seconds=60,
+    )
+    queue.enqueue("ASML")
+
+    before = datetime.now(timezone.utc)
+    [job] = service.process().jobs
+    assert job.status == EnrichmentJobStatus.QUEUED
+    assert job.next_attempt_at >= before + timedelta(seconds=60)
+
+    # Not due yet: nothing is claimed and the provider is not called again.
+    assert service.process().jobs_claimed == 0
+    assert provider.calls == ["ASML"]
+
+    # Once due, the job is retried and the delay doubles.
+    queue.save(job.model_copy(update={"next_attempt_at": before}))
+    provider.known["ASML"] = ASML
+    [done] = service.process().jobs
+    assert done.status == EnrichmentJobStatus.COMPLETED
+    assert done.next_attempt_at is None
 
 
 # --- API -------------------------------------------------------------------

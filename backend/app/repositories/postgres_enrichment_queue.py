@@ -20,8 +20,10 @@ CREATE TABLE IF NOT EXISTS enrichment_jobs (
     status TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     claimed_at TIMESTAMPTZ,
+    next_attempt_at TIMESTAMPTZ,
     document JSONB NOT NULL
 );
+ALTER TABLE enrichment_jobs ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS enrichment_jobs_active_ticker_idx
     ON enrichment_jobs (ticker)
     WHERE status IN ('queued', 'processing');
@@ -30,13 +32,15 @@ CREATE INDEX IF NOT EXISTS enrichment_jobs_status_created_idx
 """
 
 _UPSERT_SQL = """
-INSERT INTO enrichment_jobs (job_id, ticker, status, created_at, claimed_at, document)
-VALUES (%s, %s, %s, %s, %s, %s)
+INSERT INTO enrichment_jobs
+    (job_id, ticker, status, created_at, claimed_at, next_attempt_at, document)
+VALUES (%s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (job_id) DO UPDATE SET
     ticker = EXCLUDED.ticker,
     status = EXCLUDED.status,
     created_at = EXCLUDED.created_at,
     claimed_at = EXCLUDED.claimed_at,
+    next_attempt_at = EXCLUDED.next_attempt_at,
     document = EXCLUDED.document
 """
 
@@ -48,6 +52,7 @@ def _row(job: EnrichmentJob) -> tuple:
         job.status.value,
         job.created_at,
         job.claimed_at,
+        job.next_attempt_at,
         Jsonb(job.model_dump(mode="json")),
     )
 
@@ -78,8 +83,9 @@ class PostgresEnrichmentQueue(EnrichmentQueue):
             inserted = connection.execute(
                 """
                 INSERT INTO enrichment_jobs
-                    (job_id, ticker, status, created_at, claimed_at, document)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    (job_id, ticker, status, created_at, claimed_at,
+                     next_attempt_at, document)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (ticker) WHERE status IN ('queued', 'processing')
                 DO NOTHING
                 RETURNING document
@@ -109,14 +115,15 @@ class PostgresEnrichmentQueue(EnrichmentQueue):
                 rows = connection.execute(
                     """
                     SELECT document FROM enrichment_jobs
-                    WHERE status = 'queued'
+                    WHERE (status = 'queued'
+                           AND (next_attempt_at IS NULL OR next_attempt_at <= %s))
                        OR (status = 'processing'
                            AND claimed_at < %s - make_interval(secs => %s))
                     ORDER BY created_at
                     LIMIT %s
                     FOR UPDATE SKIP LOCKED
                     """,
-                    (now, lease_seconds, limit),
+                    (now, now, lease_seconds, limit),
                 ).fetchall()
                 claimed = [
                     EnrichmentJob.model_validate(row[0]).model_copy(

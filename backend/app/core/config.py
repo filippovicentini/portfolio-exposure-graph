@@ -18,6 +18,12 @@ class Settings(BaseModel):
     ollama_model: str = os.getenv("OLLAMA_MODEL", "qwen3:4b-instruct")
     portfolio_store: str = os.getenv("PORTFOLIO_STORE", "memory").strip().lower()
     enrichment_max_attempts: int = int(os.getenv("ENRICHMENT_MAX_ATTEMPTS", "3"))
+    enrichment_retry_base_seconds: float = float(
+        os.getenv("ENRICHMENT_RETRY_BASE_SECONDS", "60")
+    )
+    enrichment_retry_max_seconds: float = float(
+        os.getenv("ENRICHMENT_RETRY_MAX_SECONDS", "3600")
+    )
     enrichment_worker_interval_seconds: float = float(
         os.getenv("ENRICHMENT_WORKER_INTERVAL_SECONDS", "0")
     )

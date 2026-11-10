@@ -80,6 +80,21 @@ def test_claim_reclaims_after_lease_expiry(queue):
     assert [job.ticker for job in queue.claim(limit=1, lease_seconds=60)] == ["ASML"]
 
 
+def test_claim_skips_queued_jobs_not_yet_due(queue):
+    now = datetime.now(timezone.utc)
+    later = queue.enqueue("LATER")
+    queue.save(later.model_copy(update={"next_attempt_at": now + timedelta(minutes=5)}))
+    due = queue.enqueue("DUE")
+    queue.save(due.model_copy(update={"next_attempt_at": now - timedelta(seconds=1)}))
+
+    [claimed] = queue.claim(limit=10)
+
+    assert claimed.ticker == "DUE"
+    assert queue.get(later.job_id).next_attempt_at == later.model_copy(
+        update={"next_attempt_at": now + timedelta(minutes=5)}
+    ).next_attempt_at
+
+
 def test_list_filters_by_status(queue):
     queue.enqueue("AAA")
     done = queue.enqueue("BBB")

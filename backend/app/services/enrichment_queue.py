@@ -31,8 +31,9 @@ class EnrichmentQueue(ABC):
     ) -> list[EnrichmentJob]:
         """Mark up to ``limit`` claimable jobs as PROCESSING and return them.
 
-        Claimable jobs are QUEUED ones plus PROCESSING ones whose lease expired.
-        Oldest jobs are claimed first.
+        Claimable jobs are QUEUED ones whose ``next_attempt_at`` is unset or
+        due, plus PROCESSING ones whose lease expired. Oldest jobs are claimed
+        first.
         """
         raise NotImplementedError
 
@@ -76,7 +77,10 @@ class InMemoryEnrichmentQueue(EnrichmentQueue):
             claimable = [
                 job
                 for job in self.jobs.values()
-                if job.status == EnrichmentJobStatus.QUEUED
+                if (
+                    job.status == EnrichmentJobStatus.QUEUED
+                    and (job.next_attempt_at is None or job.next_attempt_at <= now)
+                )
                 or (
                     job.status == EnrichmentJobStatus.PROCESSING
                     and job.claimed_at is not None

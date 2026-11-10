@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.domain.enums import AssetStatus, EnrichmentJobStatus, PortfolioStatus
 from app.domain.models import (
@@ -30,7 +30,10 @@ class EnrichmentService:
     - resolved: the job is COMPLETED, the asset registry is updated and every
       portfolio holding the ticker as PENDING_ENRICHMENT gets the resolved asset.
     - not recognised by any provider, or a provider error: the job goes back to
-      QUEUED until ``max_attempts`` is reached, then it is FAILED.
+      QUEUED until ``max_attempts`` is reached, then it is FAILED. A requeued
+      job is not claimable before ``next_attempt_at``: the delay starts at
+      ``retry_base_seconds`` and doubles per attempt, capped at
+      ``retry_max_seconds``, so a short outage does not burn every attempt.
     - on the final attempt, if every provider answered and none recognised the
       ticker, the asset becomes UNSUPPORTED. If the last attempt hit provider
       errors (network, missing credentials), the asset stays
@@ -47,14 +50,30 @@ class EnrichmentService:
         portfolio_repository: PortfolioRepository,
         max_attempts: int = 3,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
+        retry_base_seconds: float = 60.0,
+        retry_max_seconds: float = 3600.0,
     ) -> None:
         if max_attempts < 1:
             raise ValueError("max_attempts must be at least 1")
+        if retry_base_seconds < 0 or retry_max_seconds < retry_base_seconds:
+            raise ValueError(
+                "retry delays must satisfy 0 <= retry_base_seconds <= retry_max_seconds"
+            )
         self.queue = queue
         self.asset_resolver = asset_resolver
         self.portfolio_repository = portfolio_repository
         self.max_attempts = max_attempts
         self.lease_seconds = lease_seconds
+        self.retry_base_seconds = retry_base_seconds
+        self.retry_max_seconds = retry_max_seconds
+
+    def retry_delay(self, attempts: int) -> timedelta:
+        """Delay before the next attempt after ``attempts`` failed ones."""
+        seconds = min(
+            self.retry_base_seconds * 2 ** max(attempts - 1, 0),
+            self.retry_max_seconds,
+        )
+        return timedelta(seconds=seconds)
 
     def process(self, limit: int = 10) -> EnrichmentProcessResult:
         claimed = self.queue.claim(limit, lease_seconds=self.lease_seconds)
@@ -84,7 +103,12 @@ class EnrichmentService:
     ) -> tuple[EnrichmentJob, AssetResolution | None]:
         attempts = job.attempts + 1
         now = datetime.now(timezone.utc)
-        common = {"attempts": attempts, "updated_at": now, "claimed_at": None}
+        common = {
+            "attempts": attempts,
+            "updated_at": now,
+            "claimed_at": None,
+            "next_attempt_at": None,
+        }
 
         resolved, errors = self.asset_resolver.enrich(job.ticker)
         if resolved is not None:
@@ -115,6 +139,7 @@ class EnrichmentService:
                         **common,
                         "status": EnrichmentJobStatus.QUEUED,
                         "last_error": last_error,
+                        "next_attempt_at": now + self.retry_delay(attempts),
                     }
                 ),
                 None,

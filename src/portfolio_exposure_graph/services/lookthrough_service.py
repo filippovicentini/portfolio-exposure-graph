@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 from uuid import UUID
 
 from portfolio_exposure_graph.domain.enums import AssetType
@@ -9,6 +10,7 @@ from portfolio_exposure_graph.domain.models import (
     ClassificationBucket,
     EtfHolding,
     ExposureBreakdown,
+    Portfolio,
     PortfolioLookthrough,
 )
 from portfolio_exposure_graph.providers.base import EtfHoldingsProvider
@@ -103,6 +105,62 @@ def _buckets(weights: dict[str, float]) -> list[ClassificationBucket]:
     return buckets
 
 
+@dataclass(frozen=True)
+class ConstituentExposure:
+    """One ETF constituent's share of the portfolio (position x holding weight)."""
+
+    etf_ticker: str
+    holding: EtfHolding
+    weight_pct: float
+
+
+@dataclass(frozen=True)
+class EtfExpansion:
+    etf_ticker: str
+    position_weight_pct: float
+    constituents: list[ConstituentExposure]
+    # Part of the position the published holdings do not cover (cash, gaps).
+    uncovered_weight_pct: float
+    expanded: bool
+
+
+def expand_etf_positions(
+    portfolio: Portfolio, provider: EtfHoldingsProvider
+) -> list[EtfExpansion]:
+    """Expand every ETF position one level.
+
+    Issuers round each weight (iShares to 2 decimals), so over a thousand
+    holdings the published weights can add up to slightly more than 100%;
+    they are then scaled down proportionally. A shortfall below 100% is
+    never redistributed: it is returned as uncovered weight.
+    """
+    expansions: list[EtfExpansion] = []
+    for position in portfolio.positions:
+        if position.asset.asset_type != AssetType.ETF:
+            continue
+        ticker = position.ticker.upper()
+        weight = position.weight_pct
+        try:
+            holdings = provider.get_holdings(ticker)
+        except Exception:
+            logger.exception("ETF holdings provider failed for ticker %s", ticker)
+            holdings = []
+        if not holdings:
+            expansions.append(EtfExpansion(ticker, weight, [], weight, expanded=False))
+            continue
+        published = sum(holding.weight_pct for holding in holdings)
+        scale = 100.0 / published if published > 100.0 else 1.0
+        constituents = [
+            ConstituentExposure(ticker, holding, weight * holding.weight_pct * scale / 100.0)
+            for holding in holdings
+        ]
+        covered = sum(item.weight_pct for item in constituents)
+        expansions.append(
+            EtfExpansion(ticker, weight, constituents, weight - covered, expanded=True)
+        )
+    return expansions
+
+
 class LookthroughService:
     """Expand ETF positions one level and aggregate exposure and classification."""
 
@@ -143,42 +201,24 @@ class LookthroughService:
                 # Pending or unsupported: counted, but nothing is known about it.
                 for breakdown in (countries, sectors, asset_classes):
                     breakdown[UNCLASSIFIED] += weight
-                continue
 
-            try:
-                holdings = self.etf_holdings_provider.get_holdings(ticker)
-            except Exception:
-                logger.exception("ETF holdings provider failed for ticker %s", ticker)
-                holdings = []
-
-            if not holdings:
-                unexpanded_etfs.append(ticker)
+        for expansion in expand_etf_positions(portfolio, self.etf_holdings_provider):
+            if not expansion.expanded:
+                unexpanded_etfs.append(expansion.etf_ticker)
                 for breakdown in (countries, sectors, asset_classes):
-                    breakdown[NOT_EXPANDED] += weight
+                    breakdown[NOT_EXPANDED] += expansion.position_weight_pct
                 continue
-
-            # Issuers round each weight (iShares to 2 decimals), so over a
-            # thousand holdings the published weights can add up to slightly
-            # more than 100%; they are then scaled down proportionally. A
-            # shortfall below 100% is never redistributed: it stays
-            # unclassified.
-            published = sum(holding.weight_pct for holding in holdings)
-            scale = 100.0 / published if published > 100.0 else 1.0
-            covered = 0.0
-            for holding in holdings:
-                holding_weight = holding.weight_pct * scale
-                exposure = weight * holding_weight / 100.0
-                covered += holding_weight
-                indirect[holding.ticker] += exposure
-                via_etfs[holding.ticker].add(ticker)
+            for item in expansion.constituents:
+                holding = item.holding
+                indirect[holding.ticker] += item.weight_pct
+                via_etfs[holding.ticker].add(expansion.etf_ticker)
                 details.setdefault(holding.ticker, holding)
-                countries[normalize_country(holding.country)] += exposure
-                sectors[normalize_sector(holding.sector)] += exposure
-                asset_classes[normalize_asset_class(holding.asset_class)] += exposure
-            residual = weight * (100.0 - covered) / 100.0
-            if abs(residual) > 1e-9:
+                countries[normalize_country(holding.country)] += item.weight_pct
+                sectors[normalize_sector(holding.sector)] += item.weight_pct
+                asset_classes[normalize_asset_class(holding.asset_class)] += item.weight_pct
+            if abs(expansion.uncovered_weight_pct) > 1e-9:
                 for breakdown in (countries, sectors, asset_classes):
-                    breakdown[UNCLASSIFIED] += residual
+                    breakdown[UNCLASSIFIED] += expansion.uncovered_weight_pct
 
         exposures = []
         for key in set(direct) | set(indirect):

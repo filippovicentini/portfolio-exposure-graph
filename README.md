@@ -23,7 +23,7 @@ NVIDIA's FY2026 10-K names its key suppliers in one paragraph:
 From that, the graph answers questions a holdings list cannot:
 
 - **80% of the portfolio reaches companies that depend on TSMC**, as a foundry, through NVIDIA.
-- **TSMC is also held directly at 20%.** The portfolio is concentrated on TSMC from two directions, and a plain holdings list shows only one of them.
+- **TSMC is also held directly at 20%.** The portfolio is concentrated on TSMC from two directions, and a plain holdings list shows only one of them. The same works through European ETFs: TSMC's Taiwanese shares inside an emerging-markets UCITS ETF are matched to the supplier as well.
 - **Which suppliers are SEC registrants:** TSMC, SK hynix, Micron and Fabrinet are linked to their SEC CIKs. Samsung, Hon Hai and Wistron are not SEC registrants and stay unlinked rather than being matched by guesswork.
 
 ![Supplier exposure for 80% NVDA + 20% TSM](docs/images/supplier-exposure.png)

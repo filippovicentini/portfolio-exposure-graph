@@ -546,7 +546,8 @@ class Neo4jGraphRepository(GraphRepository):
            dependency.roles AS roles,
            company_path_weight_pct,
            supplier_company.cik AS supplier_company_cik,
-           supplier_company.name AS supplier_company_name
+           supplier_company.name AS supplier_company_name,
+           coalesce(supplier.aliases, [supplier.canonical_name]) AS supplier_aliases
     """
 
     SUPPLIER_COMPANY_LINK_TARGETS_QUERY = """
@@ -1206,6 +1207,7 @@ class Neo4jGraphRepository(GraphRepository):
                 company_path_weight_pct=float(record["company_path_weight_pct"]),
                 supplier_company_cik=record.get("supplier_company_cik"),
                 supplier_company_name=record.get("supplier_company_name"),
+                supplier_aliases=[str(alias) for alias in (record.get("supplier_aliases") or [])],
             )
             for record in records
         ]

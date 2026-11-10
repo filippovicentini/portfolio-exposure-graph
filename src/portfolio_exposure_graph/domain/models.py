@@ -510,6 +510,18 @@ class DependencyExposureRow(BaseModel):
     # The supplier's own SEC company, when an IDENTIFIED_AS link exists.
     supplier_company_cik: str | None = Field(default=None, max_length=10)
     supplier_company_name: str | None = None
+    # Canonical name plus aliases, for matching non-US ETF constituents.
+    supplier_aliases: list[str] = Field(default_factory=list)
+
+
+class HeldRoute(BaseModel):
+    """Part of a supplier the portfolio holds through one ETF constituent."""
+
+    etf: str
+    constituent: str
+    constituent_name: str
+    weight_pct: float = Field(ge=0)
+    method: str
 
 
 class DependentCompanyExposure(BaseModel):
@@ -526,9 +538,12 @@ class SupplierExposureItem(BaseModel):
     companies: list[DependentCompanyExposure] = Field(min_length=1)
     supplier_company_cik: str | None = Field(default=None, max_length=10)
     supplier_company_name: str | None = None
-    # Portfolio weight already held in the supplier itself (direct + one-level
-    # look-through). None when the supplier is not linked to an SEC company.
+    # Portfolio weight already held in the supplier itself: through its SEC
+    # company (direct + one-level look-through of US-listed shares) plus
+    # non-US ETF constituents matched by name (held_via). None when neither
+    # applies.
     held_weight_pct: float | None = Field(default=None, ge=0)
+    held_via: list[HeldRoute] = Field(default_factory=list)
 
 
 class RoleExposureItem(BaseModel):
@@ -552,8 +567,9 @@ class PortfolioSupplierExposure(BaseModel):
     )
     held_basis: str = (
         "Held weight is the sourced portfolio / one-level look-through weight "
-        "already held in the supplier's own SEC-registered company; it is only "
-        "reported for suppliers linked to an SEC registrant"
+        "already held in the supplier itself: its SEC-registered company, plus "
+        "non-US ETF constituents matched to the supplier by name (listed with "
+        "the ETF and match method); it is only reported when one of these exists"
     )
     overlap_basis: str = (
         "A company usually depends on several suppliers, so supplier and role "

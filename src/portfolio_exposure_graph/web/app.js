@@ -618,12 +618,17 @@ function renderSupplierExposure() {
 }
 
 function renderSupplierHolding(item) {
-  if (!item.supplier_company_cik) return "";
   const held = Number(item.held_weight_pct) || 0;
-  const listing = `SEC CIK ${item.supplier_company_cik}`;
-  return held > 0
-    ? `<span class="supplier-held">Also held in the portfolio: ${escapeHtml(formatWeight(held))} · ${escapeHtml(listing)}</span>`
-    : `<span class="supplier-listed">${escapeHtml(listing)} · not held</span>`;
+  const listing = item.supplier_company_cik ? `SEC CIK ${item.supplier_company_cik}` : "";
+  const routes = (item.held_via || []).map((route) => {
+    const how = route.method === "truncated_name_prefix" ? ", truncated name" : "";
+    return `via ${route.etf}: ${route.constituent_name} ${formatWeight(route.weight_pct)}${how}`;
+  });
+  if (held > 0) {
+    const details = [listing, ...routes].filter(Boolean).join(" · ");
+    return `<span class="supplier-held">Also held in the portfolio: ${escapeHtml(formatWeight(held))}${details ? ` · ${escapeHtml(details)}` : ""}</span>`;
+  }
+  return listing ? `<span class="supplier-listed">${escapeHtml(listing)} · not held</span>` : "";
 }
 
 async function loadLookthrough(portfolioId) {

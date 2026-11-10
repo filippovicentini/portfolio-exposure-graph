@@ -159,7 +159,7 @@ def test_exposure_reports_weight_already_held_in_a_linked_supplier():
     assert items["s:tsmc"].held_weight_pct == 16.2
     assert items["s:samsung"].supplier_company_cik is None
     assert items["s:samsung"].held_weight_pct is None
-    assert "only reported for suppliers linked to an SEC registrant" in result.held_basis
+    assert "matched to the supplier by name" in result.held_basis
 
 
 def test_linked_supplier_not_held_reports_zero():

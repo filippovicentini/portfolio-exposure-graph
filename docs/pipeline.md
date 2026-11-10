@@ -49,6 +49,18 @@ Portfolio weights may sum to less than 100%, for example to leave a bond ETF
 out of an equity analysis. The remainder is reported as not analysed, so every
 percentage stays a share of the real portfolio.
 
+### Suppliers held through UCITS ETFs
+
+Supplier exposure reports how much of each supplier the portfolio already holds.
+That figure has two parts that never overlap:
+
+- **Through the supplier's SEC company** (`IDENTIFIED_AS`): US-listed shares held directly or through ETF look-through.
+- **Through non-US ETF constituents matched by name.** NVIDIA depends on TSMC; the same portfolio may hold TSMC's Taiwanese shares inside an emerging-markets ETF. Each match is listed (`held_via`) with the ETF, the constituent and the method:
+  - `normalized_name_exact`: equal after the Supplier-linking normalization, so "SAMSUNG ELECTRONICS CO LTD" equals "Samsung Electronics Co., Ltd.";
+  - `truncated_name_prefix`: issuers cut long names mid-word ("TAIWAN SEMICONDUCTOR MANUFAC"). This is accepted only for long names of at least three words whose last word is a 4+ letter prefix of the Supplier's word, and only when the match is unique.
+
+Different companies that share a prefix ("SAMSUNG ELECTRO MECHANICS", "WISTRON NEWEB") do not match. Other share classes of the same issuer (Samsung's preferred shares) are not matched either, which is conservative: the held weight can be understated, never inflated.
+
 Adding a fund means adding a registry entry. A new issuer needs a parser for
 its file. Vanguard funds are registered but report no holdings until a stable
 source exists, so they show up as "holdings not available" rather than being

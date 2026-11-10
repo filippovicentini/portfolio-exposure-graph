@@ -37,3 +37,24 @@ def test_web_ui_shows_supplier_exposure(client):
 
     assert 'id="exposure-card"' in page
     assert "/graph/supplier-exposure" in script
+
+
+def test_every_function_the_ui_script_calls_is_defined():
+    """`node --check` only checks syntax; a call to a deleted function slips through."""
+    import re
+    from pathlib import Path
+
+    import portfolio_exposure_graph
+
+    script = (Path(portfolio_exposure_graph.__file__).parent / "web" / "app.js").read_text()
+    # Ignore quoted strings (template literals stay: they contain real calls).
+    code = re.sub(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', '""', script)
+    defined = (
+        set(re.findall(r"\bfunction\s+([A-Za-z_]\w*)\s*\(", code))
+        | set(re.findall(r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=", code))
+    )
+    calls = set(re.findall(r"(?<![.\w$])([a-z][A-Za-z0-9_]*)\s*\(", code))
+    language = {"if", "for", "while", "switch", "return", "function", "catch", "typeof", "await", "async"}
+    browser = {"fetch", "setTimeout", "encodeURIComponent", "parseFloat", "isNaN"}
+
+    assert calls - defined - language - browser == set()

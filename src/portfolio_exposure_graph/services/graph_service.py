@@ -22,6 +22,7 @@ from portfolio_exposure_graph.domain.models import (
     CompanyResolution,
     DependencyExposureRow,
     DependentCompanyExposure,
+    HeldRoute,
     EvidenceSemanticCandidateBatch,
     EvidenceSemanticCandidatesSyncResult,
     FilingEvidenceBatch,
@@ -53,7 +54,15 @@ from portfolio_exposure_graph.services.dependency_promoter import (
     DependencyPromotionRejected,
     DeterministicDependencyPromoter,
 )
+from portfolio_exposure_graph.services.lookthrough_service import (
+    ConstituentExposure,
+    expand_etf_positions,
+)
 from portfolio_exposure_graph.services.supplier_company_linker import SupplierCompanyLinker
+from portfolio_exposure_graph.services.supplier_holding_matcher import (
+    match_constituent,
+    supplier_name_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -575,7 +584,8 @@ class GraphService:
         self,
         portfolio_id: UUID,
     ) -> PortfolioSupplierExposure | None:
-        if self.portfolio_repository.get(portfolio_id) is None:
+        portfolio = self.portfolio_repository.get(portfolio_id)
+        if portfolio is None:
             return None
         rows = self.graph_repository.get_dependency_exposure_rows(portfolio_id)
         holding_weights = (
@@ -583,7 +593,20 @@ class GraphService:
             if any(row.supplier_company_cik for row in rows)
             else {}
         )
-        return aggregate_supplier_exposure(portfolio_id, rows, holding_weights)
+        # Non-US constituents of UCITS ETFs are not in the SEC graph; they are
+        # matched to Suppliers by name. US-listed ones are already counted
+        # through the supplier's SEC company, so they are excluded here.
+        constituents = (
+            [
+                item
+                for expansion in expand_etf_positions(portfolio, self.etf_holdings_provider)
+                for item in expansion.constituents
+                if item.holding.us_listed is False and item.weight_pct > 0
+            ]
+            if rows
+            else []
+        )
+        return aggregate_supplier_exposure(portfolio_id, rows, holding_weights, constituents)
 
     def sync_supplier_companies(
         self,
@@ -678,6 +701,7 @@ def aggregate_supplier_exposure(
     portfolio_id: UUID,
     rows: list[DependencyExposureRow],
     holding_weights: dict[str, float] | None = None,
+    constituents: list[ConstituentExposure] | None = None,
 ) -> PortfolioSupplierExposure:
     """Aggregate dependency rows by supplier and by role.
 
@@ -692,6 +716,7 @@ def aggregate_supplier_exposure(
     portfolio already holds.
     """
     holding_weights = holding_weights or {}
+    constituents = constituents or []
 
     def route_key(row: DependencyExposureRow) -> tuple[tuple[str, ...], str]:
         return tuple(row.asset_path), row.company_cik
@@ -713,8 +738,10 @@ def aggregate_supplier_exposure(
                 "companies": {},
                 "company_cik": None,
                 "company_name": None,
+                "names": {row.supplier_name},
             },
         )
+        supplier["names"].update(row.supplier_aliases)
         if row.supplier_company_cik:
             supplier["company_cik"] = row.supplier_company_cik
             supplier["company_name"] = row.supplier_company_name
@@ -732,6 +759,32 @@ def aggregate_supplier_exposure(
 
     def total(weights: dict) -> float:
         return round(sum(weights.values()), 6)
+
+    def held_routes(names: set[str]) -> list[HeldRoute]:
+        keys = supplier_name_keys(sorted(names))
+        routes = []
+        for item in constituents:
+            method = match_constituent(item.holding.description or "", keys)
+            if method:
+                routes.append(
+                    HeldRoute(
+                        etf=item.etf_ticker,
+                        constituent=item.holding.ticker,
+                        constituent_name=item.holding.description or item.holding.ticker,
+                        weight_pct=round(item.weight_pct, 6),
+                        method=method,
+                    )
+                )
+        routes.sort(key=lambda route: -route.weight_pct)
+        return routes
+
+    def held_weight(data: dict, routes: list[HeldRoute]) -> float | None:
+        if not data["company_cik"] and not routes:
+            return None
+        sec_part = holding_weights.get(data["company_cik"], 0.0) if data["company_cik"] else 0.0
+        return round(sec_part + sum(route.weight_pct for route in routes), 6)
+
+    routes_by_supplier = {sid: held_routes(data["names"]) for sid, data in suppliers.items()}
 
     supplier_items = [
         SupplierExposureItem(
@@ -752,11 +805,8 @@ def aggregate_supplier_exposure(
             ),
             supplier_company_cik=data["company_cik"],
             supplier_company_name=data["company_name"],
-            held_weight_pct=(
-                round(holding_weights.get(data["company_cik"], 0.0), 6)
-                if data["company_cik"]
-                else None
-            ),
+            held_weight_pct=held_weight(data, routes_by_supplier[supplier_id]),
+            held_via=routes_by_supplier[supplier_id],
         )
         for supplier_id, data in suppliers.items()
     ]

@@ -37,7 +37,6 @@ Next milestones:
 
 - enrich internal Supplier identities with external identifiers where defensible
 - persist the asset registry
-- surface the enrichment queue and saved portfolios in the web UI
 - improve local setup
 - add richer dependency aggregation and filtering as the graph grows
 
@@ -139,7 +138,7 @@ cd backend
 uvicorn app.main:app --reload
 ```
 
-Open the local web UI at `http://127.0.0.1:8000/`. The UI can create and graph-sync a portfolio, load promoted Supplier dependency paths, filter them by role/search text, and expand source-level SEC provenance. It also exposes an optional bounded dependency-enrichment pipeline; semantic extraction in that flow requires `SEMANTIC_PROVIDER=ollama`.
+Open the local web UI at `http://127.0.0.1:8000/`. The UI can create and graph-sync a portfolio, reopen saved portfolios, show each holding's resolution and enrichment status, process the enrichment queue (re-syncing the graph when a holding resolves), load promoted Supplier dependency paths, filter them by role/search text, and expand source-level SEC provenance. It also exposes an optional bounded dependency-enrichment pipeline; semantic extraction in that flow requires `SEMANTIC_PROVIDER=ollama`.
 
 Open API docs at `http://127.0.0.1:8000/docs`.
 

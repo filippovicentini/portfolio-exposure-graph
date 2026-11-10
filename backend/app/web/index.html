@@ -71,13 +71,26 @@
             <span aria-hidden="true">→</span>
           </button>
 
-          <div class="divider"><span>or</span></div>
+          <div class="divider"><span>or open a saved one</span></div>
 
-          <label class="field">
-            <span>Existing live portfolio ID</span>
-            <input id="portfolio-id" type="text" placeholder="UUID from this backend session" autocomplete="off">
-          </label>
-          <button class="secondary-button full-width" id="load-existing" type="button">Load dependency paths</button>
+          <div class="saved-card">
+            <div class="activity-heading">
+              <span>Saved portfolios</span>
+              <button class="text-button" id="refresh-saved" type="button">Refresh</button>
+            </div>
+            <div id="saved-portfolios" class="saved-list" aria-live="polite">
+              <p class="muted">Loading…</p>
+            </div>
+          </div>
+
+          <details class="pipeline-card">
+            <summary>Load by portfolio ID</summary>
+            <label class="field">
+              <span>Portfolio ID</span>
+              <input id="portfolio-id" type="text" placeholder="Portfolio UUID" autocomplete="off">
+            </label>
+            <button class="secondary-button full-width" id="load-existing" type="button">Load portfolio</button>
+          </details>
 
           <details class="pipeline-card">
             <summary>Optional dependency enrichment</summary>
@@ -114,6 +127,17 @@
               <h2 id="results-title">No portfolio loaded</h2>
             </div>
             <button class="secondary-button" id="refresh-paths" type="button" disabled>Refresh</button>
+          </div>
+
+          <div class="holdings-card" id="holdings-card" hidden>
+            <div class="holdings-heading">
+              <div>
+                <span class="basis-label">Holdings</span>
+                <p id="holdings-summary" class="holdings-summary"></p>
+              </div>
+              <button class="secondary-button" id="process-queue" type="button" disabled>Process enrichment queue</button>
+            </div>
+            <div id="holdings-list" class="holdings-list"></div>
           </div>
 
           <div class="summary-grid" id="summary-grid" hidden>

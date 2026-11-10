@@ -9,7 +9,10 @@ from app.providers.sec_filing_evidence_provider import SecFilingEvidenceProvider
 from app.providers.sec_filings_provider import SecFilingsProvider
 from app.repositories.asset_registry import InMemoryAssetRegistry
 from app.repositories.neo4j_graph_repository import Neo4jGraphRepository
-from app.repositories.portfolio_repository import InMemoryPortfolioRepository
+from app.repositories.portfolio_repository import (
+    InMemoryPortfolioRepository,
+    PortfolioRepository,
+)
 from app.services.asset_resolver import AssetResolver
 from app.services.enrichment_queue import InMemoryEnrichmentQueue
 from app.services.graph_service import GraphService
@@ -17,7 +20,24 @@ from app.services.lookthrough_service import LookthroughService
 from app.services.portfolio_service import PortfolioService
 
 asset_registry = InMemoryAssetRegistry()
-portfolio_repository = InMemoryPortfolioRepository()
+
+
+def build_portfolio_repository() -> PortfolioRepository:
+    if settings.portfolio_store == "postgres":
+        from app.repositories.postgres_portfolio_repository import (
+            PostgresPortfolioRepository,
+        )
+
+        return PostgresPortfolioRepository(dsn=settings.database_url)
+    if settings.portfolio_store not in ("", "memory"):
+        raise ValueError(
+            f"Unsupported PORTFOLIO_STORE={settings.portfolio_store!r}; "
+            "expected 'memory' or 'postgres'"
+        )
+    return InMemoryPortfolioRepository()
+
+
+portfolio_repository = build_portfolio_repository()
 enrichment_queue = InMemoryEnrichmentQueue()
 sec_asset_provider = SecAssetProvider(user_agent=settings.sec_user_agent)
 sec_company_metadata_provider = SecCompanyMetadataProvider(

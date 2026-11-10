@@ -16,7 +16,8 @@
 12. Store evidence/provenance for document-derived edges.
 13. Return bounded exposure and supplier-dependency paths explaining why a portfolio is connected to an entity, including source provenance for promoted dependencies.
 14. Aggregate sourced portfolio/look-through weights by primary SEC industry and business-address country.
-15. Provide a small interactive local web UI for portfolio creation, graph sync, dependency-path inspection, filtering, and source-provenance expansion.
+15. Optionally persist portfolios in PostgreSQL so they survive server restarts.
+16. Provide a small interactive local web UI for portfolio creation, graph sync, dependency-path inspection, filtering, and source-provenance expansion.
 
 ## Explicitly out of scope
 

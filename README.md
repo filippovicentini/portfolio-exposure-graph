@@ -8,6 +8,8 @@ The product question is intentionally narrow:
 
 > **What am I actually exposed to, and through which paths?**
 
+> **Not investment advice.** This project is a research and engineering showcase. Its output describes sourced structural exposures; it is not financial, investment, legal or tax advice, and it must not be relied on to make investment decisions. Data comes from third-party sources (SEC EDGAR, Alpha Vantage) and may be incomplete, delayed or wrong.
+
 ## Status
 
 Implemented:
@@ -217,3 +219,7 @@ TEST_DATABASE_URL="postgresql://peg:peg@localhost:5432/peg" python -m pytest tes
 ```
 
 See [`docs/graph-schema.md`](docs/graph-schema.md) and [`docs/mvp.md`](docs/mvp.md).
+
+## License
+
+[MIT](LICENSE). The software is provided "as is", without warranty of any kind; see the license for the full terms. Third-party data retrieved at runtime (SEC EDGAR, Alpha Vantage) is subject to its providers' own terms.

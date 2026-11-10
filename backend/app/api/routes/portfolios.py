@@ -18,6 +18,7 @@ from app.domain.models import (
     PortfolioLookthrough,
     PortfolioStructuralExposure,
     PortfolioSupplierExposure,
+    SupplierCompanyLinkSyncResult,
 )
 
 router = APIRouter(prefix="/portfolios", tags=["portfolios"])
@@ -205,6 +206,20 @@ def get_portfolio_supplier_exposure(
     portfolio_id: UUID,
 ) -> PortfolioSupplierExposure:
     result = graph_service.get_supplier_exposure(portfolio_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    return result
+
+
+@router.post(
+    "/{portfolio_id}/graph/supplier-companies/sync",
+    response_model=SupplierCompanyLinkSyncResult,
+)
+def sync_portfolio_supplier_companies(
+    portfolio_id: UUID,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> SupplierCompanyLinkSyncResult:
+    result = graph_service.sync_supplier_companies(portfolio_id, limit=limit)
     if result is None:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     return result

@@ -31,6 +31,7 @@ Implemented:
 - deterministic promotion of fully resolved, source-verifiable candidates into qualitative `Company -> DEPENDS_ON -> Supplier` edges with graph-linked provenance
 - bounded portfolio dependency-path API with direct/ETF routes and source-level provenance
 - supplier and role exposure aggregation: portfolio/look-through weight reaching companies that depend on each promoted Supplier or supplier role, with dependency coverage
+- deterministic Supplier -> SEC Company linking (`IDENTIFIED_AS`) and supplier exposure that reports how much of a supplier the portfolio already holds
 - local web UI for creating/syncing portfolios and inspecting Supplier dependency paths with expandable SEC provenance
 - optional PostgreSQL persistence for portfolios, the asset registry, and the enrichment queue (`PORTFOLIO_STORE=postgres`), with portfolio listing
 - enrichment-queue processing for unseen tickers: bounded API endpoint or opt-in background worker, with retries, leases, and portfolio updates
@@ -38,9 +39,8 @@ Implemented:
 
 Next milestones:
 
-- enrich internal Supplier identities with external identifiers where defensible
+- non-SEC identifiers (e.g. LEI) for Suppliers that are not SEC registrants
 - improve local setup
-- link Suppliers to canonical Companies where defensible, to surface suppliers the portfolio also holds
 
 Out of scope for the MVP: price prediction, trading recommendations, portfolio optimization, broker integration, and real-time market data.
 
@@ -72,6 +72,8 @@ The next graph layer stores structured `RelationshipCandidate` nodes linked from
 The dependency-path API traverses portfolio holdings through canonical companies to promoted Suppliers and returns the source provenance required to explain each dependency. `company_path_weight_pct` is only the sourced direct or one-level ETF look-through weight reaching the dependent Company. It is not a supplier-dependency percentage, and `DEPENDS_ON` adds no numeric multiplier.
 
 Supplier exposure aggregates the same promoted, provenance-backed dependencies as the dependency-path API, without its limit. The unit is a holding route to a company (NVDA held directly, or NVDA inside QQQ): its sourced weight is added once to every Supplier, and once to every supplier role, that the company depends on. A Supplier's weight therefore means "portfolio/look-through weight reaching companies that depend on this Supplier". Because a company usually depends on several suppliers, supplier and role weights overlap and can sum to more than 100%. `dependency_coverage_pct` counts each route once. As with dependency paths, no numeric supplier impact is inferred.
+
+Suppliers linked to an SEC registrant (see `docs/graph-schema.md`) also report `held_weight_pct`: the sourced portfolio/look-through weight already held in the supplier itself. For example, a portfolio of 80% NVDA and 20% TSM depends on TSMC through NVIDIA and also holds TSMC directly at 20%: a concentration a plain holdings list does not show.
 
 Structural exposure aggregation reuses only sourced numeric weights already present on `OWNS` and `HOLDS`. An industry bucket therefore means "portfolio/look-through weight whose canonical company has this SEC primary SIC". A country bucket means "portfolio/look-through weight whose canonical company has this SEC business-address country". It is not a revenue-by-country estimate, and no numeric weight is inferred from `OPERATES_IN` or `BASED_IN` themselves. Coverage fields report how much portfolio/look-through weight currently has metadata for each dimension.
 
@@ -167,6 +169,7 @@ POST /api/v1/portfolios/{portfolio_id}/graph/evidence-backed-dependencies/sync?c
 GET  /api/v1/portfolios/{portfolio_id}/graph/paths
 GET  /api/v1/portfolios/{portfolio_id}/graph/dependency-paths?limit=100
 GET  /api/v1/portfolios/{portfolio_id}/graph/structural-exposure
+POST /api/v1/portfolios/{portfolio_id}/graph/supplier-companies/sync?limit=50
 GET  /api/v1/portfolios/{portfolio_id}/graph/supplier-exposure
 ```
 

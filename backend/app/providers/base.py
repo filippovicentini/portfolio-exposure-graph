@@ -6,6 +6,7 @@ from app.domain.models import (
     AssetResolution,
     CompanyFilings,
     CompanyMetadata,
+    CompanyResolution,
     EvidenceSemanticCandidateBatch,
     EvidenceSemanticTarget,
     EtfHolding,
@@ -19,6 +20,16 @@ class AssetDataProvider(ABC):
 
     @abstractmethod
     def resolve(self, ticker: str) -> AssetResolution | None:
+        raise NotImplementedError
+
+
+class CompanyDirectoryProvider(ABC):
+    """List registered companies (one entry per CIK) for name matching."""
+
+    source_url: str | None = None
+
+    @abstractmethod
+    def list_companies(self) -> list[CompanyResolution]:
         raise NotImplementedError
 
 

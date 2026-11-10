@@ -489,6 +489,7 @@ async function runPipeline() {
     ["Semantic candidates", `${API_PREFIX}/portfolios/${id}/graph/evidence-semantic-candidates/sync?evidence_limit=20&candidates_per_evidence=10`],
     ["Supplier resolution", `${API_PREFIX}/portfolios/${id}/graph/candidate-entities/sync?candidate_limit=100`],
     ["Dependency promotion", `${API_PREFIX}/portfolios/${id}/graph/evidence-backed-dependencies/sync?candidate_limit=100`],
+    ["Supplier companies", `${API_PREFIX}/portfolios/${id}/graph/supplier-companies/sync?limit=100`],
   ];
 
   try {
@@ -555,7 +556,15 @@ function renderSupplierExposure() {
   if (els.exposureCard.hidden) return;
 
   const top = exposure.suppliers[0];
-  els.exposureSummary.textContent = `${formatWeight(exposure.dependency_coverage_pct)} of the portfolio reaches companies with at least one promoted supplier dependency. Largest: ${top.supplier_name} (${formatWeight(top.weight_pct)}).`;
+  const tied = exposure.suppliers.filter((item) => item.weight_pct === top.weight_pct).length;
+  const largest = tied > 1
+    ? `${tied} suppliers tied at ${formatWeight(top.weight_pct)}`
+    : `${top.supplier_name} (${formatWeight(top.weight_pct)})`;
+  const alsoHeld = exposure.suppliers.filter((item) => (Number(item.held_weight_pct) || 0) > 0);
+  const heldText = alsoHeld.length
+    ? ` The portfolio also holds ${alsoHeld.map((item) => `${item.supplier_name} (${formatWeight(item.held_weight_pct)})`).join(", ")} directly or through ETFs.`
+    : "";
+  els.exposureSummary.textContent = `${formatWeight(exposure.dependency_coverage_pct)} of the portfolio reaches companies with at least one promoted supplier dependency. Largest: ${largest}.${heldText}`;
 
   els.roleExposure.innerHTML = exposure.roles.map((item) => `
     <span class="role-chip" title="${escapeHtml(`${item.supplier_count} supplier${item.supplier_count === 1 ? "" : "s"}`)}">
@@ -577,6 +586,7 @@ function renderSupplierExposure() {
         <span class="supplier-row-weight">${escapeHtml(formatWeight(item.weight_pct))}</span>
         <span class="supplier-bar" aria-hidden="true"><span style="width: ${width.toFixed(1)}%"></span></span>
         <small>${escapeHtml(item.roles.map(normalizeRole).join(", "))} · via ${escapeHtml(companies)}</small>
+        ${renderSupplierHolding(item)}
       </button>
     `;
   }).join("");
@@ -589,7 +599,17 @@ function renderSupplierExposure() {
     });
   });
 
-  els.exposureNote.textContent = `${exposure.weight_basis}. ${exposure.overlap_basis}. ${exposure.dependency_basis}.`;
+  const anyLinked = exposure.suppliers.some((item) => item.supplier_company_cik);
+  els.exposureNote.textContent = `${exposure.weight_basis}. ${exposure.overlap_basis}. ${exposure.dependency_basis}.${anyLinked ? ` ${exposure.held_basis}.` : ""}`;
+}
+
+function renderSupplierHolding(item) {
+  if (!item.supplier_company_cik) return "";
+  const held = Number(item.held_weight_pct) || 0;
+  const listing = `SEC CIK ${item.supplier_company_cik}`;
+  return held > 0
+    ? `<span class="supplier-held">Also held in the portfolio: ${escapeHtml(formatWeight(held))} · ${escapeHtml(listing)}</span>`
+    : `<span class="supplier-listed">${escapeHtml(listing)} · not held</span>`;
 }
 
 function populateRoleFilter(paths) {

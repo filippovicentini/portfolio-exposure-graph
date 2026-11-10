@@ -3,11 +3,11 @@ from __future__ import annotations
 import httpx
 
 from app.domain.enums import AssetStatus, AssetType
-from app.domain.models import AssetResolution
-from app.providers.base import AssetDataProvider
+from app.domain.models import AssetResolution, CompanyResolution
+from app.providers.base import AssetDataProvider, CompanyDirectoryProvider
 
 
-class SecAssetProvider(AssetDataProvider):
+class SecAssetProvider(AssetDataProvider, CompanyDirectoryProvider):
     """Resolve US-listed equities from the SEC ticker/CIK mapping."""
 
     DATA_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
@@ -25,6 +25,23 @@ class SecAssetProvider(AssetDataProvider):
         normalized = ticker.strip().upper()
         assets = self._load_assets()
         return assets.get(normalized)
+
+    @property
+    def source_url(self) -> str:
+        return self.DATA_URL
+
+    def list_companies(self) -> list[CompanyResolution]:
+        """One entry per CIK, using the first listed ticker for that CIK."""
+        companies: dict[str, CompanyResolution] = {}
+        for asset in self._load_assets().values():
+            if asset.cik and asset.company_name and asset.cik not in companies:
+                companies[asset.cik] = CompanyResolution(
+                    ticker=asset.ticker,
+                    cik=asset.cik,
+                    name=asset.company_name,
+                    exchange=asset.exchange,
+                )
+        return list(companies.values())
 
     def _load_assets(self) -> dict[str, AssetResolution]:
         if self._assets_by_ticker is not None:

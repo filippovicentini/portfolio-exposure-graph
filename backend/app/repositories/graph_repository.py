@@ -25,6 +25,7 @@ from app.domain.models import (
     FilingEvidenceTarget,
     Portfolio,
     StructuralExposureItem,
+    SupplierCompanyLink,
     SupplierIdentity,
 )
 
@@ -154,6 +155,24 @@ class GraphRepository(ABC):
         portfolio_id: UUID,
     ) -> list[DependencyExposureRow]:
         """Every holding route x company x promoted supplier, unbounded."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_supplier_company_link_targets(
+        self,
+        portfolio_id: UUID,
+        limit: int,
+    ) -> list[SupplierIdentity]:
+        """Suppliers the portfolio depends on that were never link-checked."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def sync_supplier_company_links(self, links: list[SupplierCompanyLink]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_company_holding_weights(self, portfolio_id: UUID) -> dict[str, float]:
+        """Direct + one-level look-through portfolio weight per company CIK."""
         raise NotImplementedError
 
     @abstractmethod
